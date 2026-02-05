@@ -7,7 +7,7 @@ from fastapi.security import OAuth2PasswordBearer
 from app.core.config import settings
 from app.core.password import verify_password, get_password_hash
 from app.models.user import UserInDB
-from app.crud.user import user_crud
+from app.crud.user import CRUDUser, get_user_crud
 
 # OAuth2 scheme
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl=f"{settings.API_V1_STR}/auth/login")
@@ -23,7 +23,10 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -
     encoded_jwt = jwt.encode(to_encode, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
     return encoded_jwt
 
-async def get_current_user(token: str = Depends(oauth2_scheme)) -> UserInDB:
+async def get_current_user(
+    token: str = Depends(oauth2_scheme),
+    user_crud: CRUDUser = Depends(get_user_crud),
+) -> UserInDB:
     """Get the current authenticated user from the JWT token."""
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
@@ -37,8 +40,8 @@ async def get_current_user(token: str = Depends(oauth2_scheme)) -> UserInDB:
             raise credentials_exception
     except JWTError:
         raise credentials_exception
-    
-    user = await user_crud.get_user_by_email(email=email)
+
+    user = await user_crud.get_by_email(email)
     if user is None:
         raise credentials_exception
     return user

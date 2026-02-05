@@ -3,12 +3,21 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordRequestForm
 
-from app.core import create_access_token, get_password_hash
+from app.core import create_access_token, get_password_hash, get_current_active_user
 from app.core.config import settings
 from app.crud.user import CRUDUser, get_user_crud
 from app.models.user import UserCreate, UserInDB, UserResponse, Token
 
 router = APIRouter()
+
+
+@router.get("/me", response_model=UserResponse)
+async def get_me(current_user: UserInDB = Depends(get_current_active_user)):
+    """
+    Return current authenticated user. Used to restore session on app load.
+    Returns 401 if token is invalid or expired.
+    """
+    return UserResponse(**current_user.dict(exclude={"hashed_password"}, by_alias=False))
 
 @router.post("/signup", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
 async def signup(
