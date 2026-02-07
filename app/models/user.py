@@ -12,6 +12,13 @@ class UserRole(str, Enum):
     CUSTOMER = "customer"
     PHOTOGRAPHER = "photographer"
 
+class OrganizationInline(BaseModel):
+    """Inline organization for signup when is_part_of_organization is True."""
+    name: str = Field(..., min_length=1, max_length=200)
+    location: Optional[str] = Field(None, max_length=200)
+    contact_number: Optional[str] = Field(None, max_length=20)
+
+
 class UserBase(BaseModel):
     email: EmailStr = Field(..., description="User's email address, must be unique")
     full_name: str = Field(..., min_length=2, max_length=100, description="User's full name")
@@ -22,6 +29,8 @@ class UserBase(BaseModel):
     is_active: bool = Field(True, description="Whether the user account is active")
     is_verified: bool = Field(False, description="Whether the user's email is verified")
     role: UserRole = Field(UserRole.CUSTOMER, description="User's role in the system")
+    is_part_of_organization: bool = Field(False, description="True if photographer belongs to an organization")
+    organization_id: Optional[str] = Field(None, description="Reference to Organization _id")
     preferences: Dict[str, Any] = Field(default_factory=dict, 
                                       description="User preferences and settings")
     last_login: Optional[datetime] = Field(None, description="Last login timestamp")
@@ -33,7 +42,10 @@ class UserBase(BaseModel):
 class UserCreate(UserBase):
     password: str = Field(..., min_length=8, max_length=100, 
                          description="Password must be at least 8 characters long")
-    
+    organization: Optional[OrganizationInline] = Field(
+        None, description="Organization details when is_part_of_organization is True (photographers only)"
+    )
+
     @validator('password')
     def password_strength(cls, v):
         if len(v) < 8:
@@ -43,6 +55,29 @@ class UserCreate(UserBase):
         if not any(c.isdigit() for c in v):
             raise ValueError('Password must contain at least one number')
         return v
+
+    @validator('organization')
+    def validate_organization(cls, v, values):
+        if values.get('is_part_of_organization') is True:
+            if values.get('role') != UserRole.PHOTOGRAPHER:
+                raise ValueError('Only photographers can be part of an organization')
+            if not v:
+                raise ValueError('Organization details are required when is_part_of_organization is True')
+            if not (v.name and v.name.strip()):
+                raise ValueError('Organization name is required')
+        elif v:
+            return None
+        return v
+
+class ProfileImageUpdate(BaseModel):
+    """Body for updating only the profile image URL (e.g. from Firebase Storage)."""
+    profile_picture: str = Field(..., min_length=1, description="Public URL of the profile image (e.g. Firebase Storage download URL)")
+
+    class Config:
+        schema_extra = {
+            "example": {"profile_picture": "https://firebasestorage.googleapis.com/..."}
+        }
+
 
 class UserUpdate(BaseModel):
     email: Optional[EmailStr] = Field(None, description="New email address")

@@ -24,7 +24,11 @@ class CRUDUser:
             user_dict.setdefault("is_active", True)
             user_dict.setdefault("is_verified", False)
             user_dict.setdefault("role", "customer")
+            user_dict.setdefault("is_part_of_organization", False)
+            user_dict.setdefault("organization_id", None)
             user_dict.setdefault("preferences", {})
+            if "organization_id" in user_dict and user_dict["organization_id"] is not None:
+                user_dict["organization_id"] = str(user_dict["organization_id"])
             # Ensure hashed_password is present
             if "hashed_password" not in user_dict:
                 return None
@@ -43,7 +47,11 @@ class CRUDUser:
                 user_dict.setdefault("is_active", True)
                 user_dict.setdefault("is_verified", False)
                 user_dict.setdefault("role", "customer")
+                user_dict.setdefault("is_part_of_organization", False)
+                user_dict.setdefault("organization_id", None)
                 user_dict.setdefault("preferences", {})
+                if "organization_id" in user_dict and user_dict["organization_id"] is not None:
+                    user_dict["organization_id"] = str(user_dict["organization_id"])
                 # Ensure hashed_password is present
                 if "hashed_password" not in user_dict:
                     return None
@@ -70,7 +78,14 @@ class CRUDUser:
             now = datetime.utcnow()
             user_data.setdefault("created_at", now)
             user_data.setdefault("updated_at", now)
-            
+            user_data.setdefault("is_part_of_organization", False)
+            user_data.setdefault("organization_id", None)
+
+            # Convert organization_id string to ObjectId for MongoDB
+            oid = user_data.get("organization_id")
+            if oid is not None:
+                user_data["organization_id"] = ObjectId(oid) if isinstance(oid, str) else oid
+
             # Insert the new user
             await self.collection.insert_one(user_data)
             
@@ -86,7 +101,11 @@ class CRUDUser:
             created_user.setdefault("is_active", True)
             created_user.setdefault("is_verified", False)
             created_user.setdefault("role", "customer")
+            created_user.setdefault("is_part_of_organization", False)
+            created_user.setdefault("organization_id", None)
             created_user.setdefault("preferences", {})
+            if "organization_id" in created_user and created_user["organization_id"] is not None:
+                created_user["organization_id"] = str(created_user["organization_id"])
             
             return UserInDB(**created_user)
         
@@ -170,8 +189,10 @@ class CRUDUser:
             # Get the updated user
             updated_user = await self.collection.find_one({"_id": user_oid})
             if updated_user:
-                # Convert ObjectId to string for the id field
                 updated_user["id"] = str(updated_user.pop("_id"))
+                updated_user.setdefault("is_part_of_organization", False)
+                if updated_user.get("organization_id") is not None:
+                    updated_user["organization_id"] = str(updated_user["organization_id"])
                 return UserInDB(**updated_user)
             return None
             

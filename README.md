@@ -85,8 +85,19 @@ The API will be available at `http://localhost:8000`
 
 Once the server is running, you can access the interactive API documentation:
 
-- **Swagger UI**: `http://localhost:8000/docs`
-- **ReDoc**: `http://localhost:8000/redoc`
+- **Swagger UI**: `http://localhost:3001/docs` (or your configured port)
+- **OpenAPI JSON**: `http://localhost:3001/api/openapi.json`
+
+### Auth & profile image
+
+| Method | Endpoint | Auth | Description |
+|--------|----------|------|-------------|
+| POST | `/api/auth/signup` | No | Register; optional `profile_picture` URL (e.g. from Firebase Storage) |
+| POST | `/api/auth/login` | No | Login (form-urlencoded `username`, `password`) |
+| GET | `/api/auth/me` | Bearer | Current user (session restore) |
+| PUT | `/api/auth/profile-image` | Bearer | Update profile image URL only. Body: `{ "profile_picture": "https://..." }` |
+
+Profile images are stored by URL only (e.g. Firebase Storage download URL); the API does not store file blobs.
 
 ## Project Structure
 

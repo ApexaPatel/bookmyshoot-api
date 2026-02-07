@@ -6,7 +6,8 @@ from fastapi.security import OAuth2PasswordRequestForm
 from app.core import create_access_token, get_password_hash, get_current_active_user
 from app.core.config import settings
 from app.crud.user import CRUDUser, get_user_crud
-from app.models.user import UserCreate, UserInDB, UserResponse, Token
+from app.crud.organization import CRUDOrganization, get_organization_crud
+from app.models.user import UserCreate, UserInDB, UserResponse, Token, ProfileImageUpdate
 
 router = APIRouter()
 
@@ -19,45 +20,70 @@ async def get_me(current_user: UserInDB = Depends(get_current_active_user)):
     """
     return UserResponse(**current_user.dict(exclude={"hashed_password"}, by_alias=False))
 
+
+@router.put("/profile-image", response_model=UserResponse)
+async def update_profile_image(
+    body: ProfileImageUpdate,
+    current_user: UserInDB = Depends(get_current_active_user),
+    user_crud: CRUDUser = Depends(get_user_crud),
+):
+    """
+    Update the current user's profile image URL (e.g. after uploading to Firebase Storage).
+    Requires authentication. Replaces any existing profile_picture.
+    """
+    updated = await user_crud.update(
+        current_user.id,
+        {"profile_picture": body.profile_picture},
+        return_updated=True,
+    )
+    if not updated:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to update profile image")
+    return UserResponse(**updated.dict(exclude={"hashed_password"}, by_alias=False))
+
+
 @router.post("/signup", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
 async def signup(
     user_in: UserCreate,
-    user_crud: CRUDUser = Depends(get_user_crud)
+    user_crud: CRUDUser = Depends(get_user_crud),
+    org_crud: CRUDOrganization = Depends(get_organization_crud),
 ):
     """
-    Create a new user account.
+    Create a new user account. If is_part_of_organization is True and organization is provided,
+    creates the organization first then the user with organization_id.
     """
-    # Check if user already exists
     existing_user = await user_crud.get_by_email(user_in.email)
     if existing_user:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Email already registered"
         )
-    
-    # Hash the password
-    hashed_password = get_password_hash(user_in.password)
-    
-    # Create user data dictionary with hashed_password
-    user_data = user_in.dict(exclude={"password"})  # Exclude the plain password
-    user_data["hashed_password"] = hashed_password  # Add the hashed password
-    
-    # Set default values for required fields
+
+    # Build user data; exclude password and nested organization
+    user_data = user_in.dict(exclude={"password", "organization"})
+    user_data["hashed_password"] = get_password_hash(user_in.password)
     user_data.setdefault("is_active", True)
     user_data.setdefault("is_verified", False)
     user_data.setdefault("role", "customer")
     user_data.setdefault("preferences", {})
-    
-    # Set timestamps
     now = datetime.utcnow()
     user_data["created_at"] = now
     user_data["updated_at"] = now
-    
-    # Create the user using the dictionary directly
+
+    # If photographer part of organization, create organization first then link
+    if getattr(user_in, "is_part_of_organization", False) and user_in.organization:
+        org = await org_crud.create({
+            "name": user_in.organization.name.strip(),
+            "location": user_in.organization.location and user_in.organization.location.strip() or None,
+            "contact_number": user_in.organization.contact_number and user_in.organization.contact_number.strip() or None,
+        })
+        user_data["organization_id"] = org.id
+        user_data["is_part_of_organization"] = True
+    else:
+        user_data["organization_id"] = None
+        user_data["is_part_of_organization"] = getattr(user_in, "is_part_of_organization", False)
+
     user = await user_crud.create(user_data)
-    
-    # Convert to response model (exclude hashed_password)
-    response_data = user.dict(exclude={"hashed_password"})
+    response_data = user.dict(exclude={"hashed_password"}, by_alias=False)
     return UserResponse(**response_data)
 
 @router.post("/login", response_model=Token)

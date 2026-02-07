@@ -144,10 +144,14 @@ def custom_openapi():
         }
     }
     
-    # Add security to all endpoints except auth
-    for path in openapi_schema["paths"].values():
-        for method in path.values():
-            if method.get("summary") == "Login" or method.get("operationId") == "login_for_access_token":
+    # Add security to all endpoints except auth (login, signup)
+    for path_key, path in openapi_schema["paths"].items():
+        for method_key, method in path.items():
+            if not isinstance(method, dict):
+                continue
+            op_id = method.get("operationId") or ""
+            summary = (method.get("summary") or "").lower()
+            if "login" in op_id or "login" in summary or "signup" in op_id or "signup" in summary:
                 continue
             method["security"] = [{"OAuth2PasswordBearer": []}]
     
