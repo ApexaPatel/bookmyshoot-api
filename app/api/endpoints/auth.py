@@ -28,7 +28,7 @@ async def update_profile_image(
     user_crud: CRUDUser = Depends(get_user_crud),
 ):
     """
-    Update the current user's profile image URL (e.g. after uploading to Firebase Storage).
+    Update the current user's profile image URL (e.g. after uploading via Cloudinary).
     Requires authentication. Replaces any existing profile_picture.
     """
     updated = await user_crud.update(

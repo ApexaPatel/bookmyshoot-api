@@ -92,12 +92,12 @@ Once the server is running, you can access the interactive API documentation:
 
 | Method | Endpoint | Auth | Description |
 |--------|----------|------|-------------|
-| POST | `/api/auth/signup` | No | Register; optional `profile_picture` URL (e.g. from Firebase Storage) |
+| POST | `/api/auth/signup` | No | Register; optional `profile_picture` URL (e.g. from Cloudinary) |
 | POST | `/api/auth/login` | No | Login (form-urlencoded `username`, `password`) |
 | GET | `/api/auth/me` | Bearer | Current user (session restore) |
 | PUT | `/api/auth/profile-image` | Bearer | Update profile image URL only. Body: `{ "profile_picture": "https://..." }` |
 
-Profile images are stored by URL only (e.g. Firebase Storage download URL); the API does not store file blobs.
+Profile images are stored by URL only (e.g. Cloudinary secure URL); the API does not store file blobs.
 
 ## Project Structure
 

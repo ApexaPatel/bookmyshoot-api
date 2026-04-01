@@ -175,18 +175,15 @@ class CRUDUser:
             user_data["updated_at"] = datetime.utcnow()
             
             # Update the user
-            result = await self.collection.update_one(
+            await self.collection.update_one(
                 {"_id": user_oid},
                 {"$set": user_data}
             )
-            
-            if result.modified_count == 0:
-                return None
-                
+
             if not return_updated:
                 return True
-                
-            # Get the updated user
+
+            # Get the updated user (always return current state, even if unchanged)
             updated_user = await self.collection.find_one({"_id": user_oid})
             if updated_user:
                 updated_user["id"] = str(updated_user.pop("_id"))

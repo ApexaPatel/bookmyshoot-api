@@ -25,7 +25,9 @@ class UserBase(BaseModel):
     phone: str = Field(..., min_length=10, max_length=15, 
                       regex=r'^\+?[1-9]\d{1,14}$', 
                       description="User's phone number in E.164 format")
-    profile_picture: Optional[HttpUrl] = Field(None, description="URL to user's profile picture")
+    bio: Optional[str] = Field(None, max_length=500, description="Short photographer bio")
+    profile_picture: Optional[HttpUrl] = Field(None, description="URL to user's profile picture (avatar)")
+    cover_image: Optional[HttpUrl] = Field(None, description="URL to photographer's cover/banner image")
     is_active: bool = Field(True, description="Whether the user account is active")
     is_verified: bool = Field(False, description="Whether the user's email is verified")
     role: UserRole = Field(UserRole.CUSTOMER, description="User's role in the system")
@@ -70,12 +72,41 @@ class UserCreate(UserBase):
         return v
 
 class ProfileImageUpdate(BaseModel):
-    """Body for updating only the profile image URL (e.g. from Firebase Storage)."""
-    profile_picture: str = Field(..., min_length=1, description="Public URL of the profile image (e.g. Firebase Storage download URL)")
+    """Body for updating only the profile image URL (e.g. from Cloudinary)."""
+    profile_picture: str = Field(..., min_length=1, description="Public URL of the profile image (e.g. Cloudinary secure URL)")
 
     class Config:
         schema_extra = {
-            "example": {"profile_picture": "https://firebasestorage.googleapis.com/..."}
+            "example": {"profile_picture": "https://res.cloudinary.com/demo/image/upload/sample.jpg"}
+        }
+
+
+class CoverImageUpdate(BaseModel):
+    """Body for updating only the cover image URL (e.g. from Cloudinary). Photographers only."""
+    cover_image: str = Field(..., min_length=1, description="Public URL of the cover image (e.g. Cloudinary secure URL)")
+
+    class Config:
+        schema_extra = {
+            "example": {"cover_image": "https://res.cloudinary.com/demo/image/upload/cover.jpg"}
+        }
+
+
+class BioUpdate(BaseModel):
+    """Body for updating only the user bio. Photographers only."""
+    bio: str = Field(..., max_length=500, description="Short photographer bio (max 500 characters)")
+
+    @validator("bio")
+    def validate_bio(cls, value):
+        value = value.strip()
+        if not value:
+            raise ValueError("Bio cannot be empty")
+        if len(value) > 500:
+            raise ValueError("Bio must be 500 characters or fewer")
+        return value
+
+    class Config:
+        schema_extra = {
+            "example": {"bio": "Wedding and destination photographer with a cinematic, story-first style."}
         }
 
 
@@ -86,7 +117,9 @@ class UserUpdate(BaseModel):
     phone: Optional[str] = Field(None, min_length=10, max_length=15,
                                 regex=r'^\+?[1-9]\d{1,14}$',
                                 description="Updated phone number")
+    bio: Optional[str] = Field(None, max_length=500, description="Updated bio")
     profile_picture: Optional[HttpUrl] = Field(None, description="URL to updated profile picture")
+    cover_image: Optional[HttpUrl] = Field(None, description="URL to updated cover image")
     is_active: Optional[bool] = Field(None, description="Account active status")
     preferences: Optional[Dict[str, Any]] = Field(None, description="Updated preferences")
     password: Optional[str] = Field(None, min_length=8, max_length=100,
@@ -135,6 +168,7 @@ class UserResponse(UserBase):
                 "full_name": "John Doe",
                 "phone": "+1234567890",
                 "profile_picture": "https://example.com/profile.jpg",
+                "cover_image": "https://example.com/cover.jpg",
                 "role": "customer",
                 "is_active": True,
                 "is_verified": False,

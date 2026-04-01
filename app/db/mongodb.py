@@ -1,11 +1,12 @@
 from motor.motor_asyncio import AsyncIOMotorClient
 from pymongo.database import Database
-from pymongo.errors import ConnectionFailure, ConfigurationError, ServerSelectionTimeoutError
-from typing import Optional, Awaitable, Callable, Any
+from pymongo.errors import ConnectionFailure, ServerSelectionTimeoutError
+from typing import Optional
 import os
 import asyncio
 from dotenv import load_dotenv
 from functools import wraps
+from app.core.config import settings
 
 load_dotenv()
 
@@ -54,23 +55,17 @@ class MongoDB:
             # Connect to MongoDB with async client
             cls._client = AsyncIOMotorClient(
                 mongo_uri,
-                serverSelectionTimeoutMS=5000,  # 5 second timeout
-                socketTimeoutMS=3000,
-                connectTimeoutMS=3000,
-                maxPoolSize=100,  # Adjust based on your needs
-                minPoolSize=10,   # Minimum number of connections to keep open
-                maxIdleTimeMS=30000,  # Close idle connections after 30 seconds
+                serverSelectionTimeoutMS=10000,
+                socketTimeoutMS=10000,
+                connectTimeoutMS=10000,
+                maxPoolSize=50,
+                maxIdleTimeMS=30000,
                 retryWrites=True,
                 retryReads=True
             )
             
             # Verify the connection with a ping
             await cls._client.admin.command('ping')
-            
-            # Verify the database exists
-            db_list = await cls._client.list_database_names()
-            if db_name not in db_list:
-                raise ValueError(f"Database '{db_name}' does not exist on the server")
             
             # Set the database
             cls._db = cls._client[db_name]

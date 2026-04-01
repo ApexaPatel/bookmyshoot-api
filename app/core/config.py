@@ -19,6 +19,11 @@ class Settings(BaseSettings):
     # MongoDB settings
     MONGODB_URL: str = os.getenv("MONGODB_URL", "mongodb://localhost:27017/")
     DATABASE_NAME: str = "bookmyshoot"
+
+    # Cloudinary settings
+    CLOUD_NAME: str = os.getenv("CLOUD_NAME", "")
+    API_KEY: str = os.getenv("API_KEY", "")
+    API_SECRET: str = os.getenv("API_SECRET", "")
     
     # CORS settings
     BACKEND_CORS_ORIGINS: List[str] = ["*"]  # In production, replace with your frontend URL

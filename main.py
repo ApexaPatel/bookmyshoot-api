@@ -1,4 +1,3 @@
-import os
 import sys
 from pathlib import Path
 from typing import Optional
@@ -10,7 +9,6 @@ from fastapi.openapi.docs import get_swagger_ui_html
 from fastapi.openapi.models import OAuthFlows as OAuthFlowsModel
 from fastapi.security.utils import get_authorization_scheme_param
 from fastapi.openapi.utils import get_openapi
-from pymongo import MongoClient
 from dotenv import load_dotenv
 
 # Add the parent directory to the Python path
@@ -18,6 +16,8 @@ sys.path.append(str(Path(__file__).parent))
 
 from app.core.config import settings
 from app.api import api_router
+from app.db.mongodb import MongoDB, on_startup as mongodb_startup
+from app.services.cloudinary_service import configure_cloudinary
 
 # Load environment variables
 load_dotenv()
@@ -39,40 +39,19 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Database connection
-# Get MongoDB URL from environment variable or use default
-DATABASE_URL = os.getenv("MONGODB_URL", "mongodb://localhost:27017/")
-
-# Configure MongoDB client with proper timeouts and settings
-client = MongoClient(
-    DATABASE_URL,
-    serverSelectionTimeoutMS=5000,  # 5 second timeout for server selection
-    connectTimeoutMS=30000,        # 30 second connection timeout
-    socketTimeoutMS=30000,         # 30 second socket timeout
-    connect=False,                 # Defer connection until first operation
-    maxPoolSize=100,               # Maximum number of connections
-    retryWrites=True              # Retry write operations once if they fail
-)
-
-# Get the database
-if DATABASE_URL.endswith('/'):
-    db_name = "bookmyshoot"
-else:
-    # Extract database name from URL if provided
-    db_name = DATABASE_URL.split('/')[-1].split('?')[0] or "bookmyshoot"
-
-db = client.get_database(db_name)
-
-try:
-    # Test the connection
-    client.server_info()
-    print("Successfully connected to MongoDB!")
-except Exception as e:
-    print(f"Error connecting to MongoDB: {e}")
-    raise
-
 # Include the API router
 app.include_router(api_router, prefix=settings.API_V1_STR)
+configure_cloudinary()
+
+
+@app.on_event("startup")
+async def app_startup():
+    await mongodb_startup()
+
+
+@app.on_event("shutdown")
+async def app_shutdown():
+    await MongoDB.close_connection()
 
 # OAuth2 scheme for token authentication
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl=f"{settings.API_V1_STR}/auth/token")
@@ -151,7 +130,14 @@ def custom_openapi():
                 continue
             op_id = method.get("operationId") or ""
             summary = (method.get("summary") or "").lower()
-            if "login" in op_id or "login" in summary or "signup" in op_id or "signup" in summary:
+            if (
+                "login" in op_id
+                or "login" in summary
+                or "signup" in op_id
+                or "signup" in summary
+                or "upload" in op_id
+                or "upload" in summary
+            ):
                 continue
             method["security"] = [{"OAuth2PasswordBearer": []}]
     
