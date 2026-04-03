@@ -151,6 +151,7 @@ def custom_openapi():
                 or "signup" in summary
                 or "upload" in op_id
                 or "upload" in summary
+                or "webhook" in path_key.lower()
             ):
                 continue
             method["security"] = [{"OAuth2PasswordBearer": []}]

@@ -1,6 +1,6 @@
 from datetime import datetime
 from typing import Optional, List, Dict, Any
-from pydantic import BaseModel, EmailStr, Field, validator, HttpUrl
+from pydantic import BaseModel, EmailStr, Field, validator, HttpUrl, Extra
 from enum import Enum
 from bson import ObjectId
 
@@ -150,6 +150,7 @@ class UserInDB(UserBase):
     
     class Config:
         allow_population_by_field_name = True
+        extra = Extra.ignore
         json_encoders = {ObjectId: str}
         schema_extra = {
             "example": {

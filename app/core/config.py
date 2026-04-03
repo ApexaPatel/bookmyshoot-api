@@ -25,10 +25,6 @@ class Settings(BaseSettings):
     API_KEY: str = os.getenv("API_KEY", "")
     API_SECRET: str = os.getenv("API_SECRET", "")
 
-    # Razorpay settings
-    RAZORPAY_KEY_ID: str = os.getenv("RAZORPAY_KEY_ID", "")
-    RAZORPAY_KEY_SECRET: str = os.getenv("RAZORPAY_KEY_SECRET", "")
-    
     # CORS settings
     BACKEND_CORS_ORIGINS: List[str] = ["*"]  # In production, replace with your frontend URL
     

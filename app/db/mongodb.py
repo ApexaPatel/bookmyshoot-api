@@ -95,7 +95,10 @@ class MongoDB:
         if 'users' in (await cls._db.list_collection_names()):
             await cls._db.users.create_index('email', unique=True)
             await cls._db.users.create_index('phone', unique=True)
-            
+
+        await cls._db.subscriptions.create_index([('user_id', 1), ('created_at', -1)])
+        await cls._db.subscriptions.create_index('payment_id')
+
         # Add more indexes for other collections as needed
 
     @classmethod

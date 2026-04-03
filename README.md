@@ -63,6 +63,19 @@ FastAPI backend for BookMyShoot. It handles authentication, photographer discove
 |---|---|---|
 | `POST` | `/api/upload` | Upload image to Cloudinary and return `secure_url` |
 
+### Demo billing (simulated payments — photographers)
+| Method | Endpoint | Purpose |
+|---|---|---|
+| `POST` | `/api/simulate-payment` | Body: `plan` (`pro` \| `premium`), `simulate_success` (bool). Records a row in `subscriptions`, upgrades user plan + 30-day window when successful. |
+
+### Admin (requires `role: super_admin`)
+| Method | Endpoint | Purpose |
+|---|---|---|
+| `GET` | `/api/admin/subscriptions/metrics` | Total / active subscription records and sum of successful demo amounts (INR) |
+| `GET` | `/api/admin/subscriptions` | Table data: user, plan, amounts, status, payment id, dates |
+
+To grant admin access, set a user’s `role` to `super_admin` in MongoDB (e.g. Compass or `mongosh`).
+
 ### Portfolio
 | Method | Endpoint | Purpose |
 |---|---|---|
@@ -112,8 +125,23 @@ API_SECRET=your-cloudinary-api-secret
 ```
 
 ### 3. Run
+Use the **same Python environment** where you ran `pip install -r requirements.txt`.
+
 ```bash
+cd /path/to/bookmyshoot/backend
+source venv/bin/activate
 python3 main.py
+```
+
+Or, without activating (venv created in `backend` as in step 1):
+```bash
+cd /path/to/bookmyshoot/backend
+./venv/bin/python main.py
+```
+
+If your virtualenv lives at the **repository root** (e.g. `bookmyshoot/venv`), use that interpreter instead:
+```bash
+/path/to/bookmyshoot/venv/bin/python main.py
 ```
 
 Backend runs on:

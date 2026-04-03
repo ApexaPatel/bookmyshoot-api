@@ -6,7 +6,7 @@ from fastapi.security import OAuth2PasswordBearer
 
 from app.core.config import settings
 from app.core.password import verify_password, get_password_hash
-from app.models.user import UserInDB
+from app.models.user import UserInDB, UserRole
 from app.crud.user import CRUDUser, get_user_crud
 
 # OAuth2 scheme
@@ -50,6 +50,15 @@ async def get_current_active_user(current_user: UserInDB = Depends(get_current_u
     """Check if the current user is active."""
     if not current_user.is_active:
         raise HTTPException(status_code=400, detail="Inactive user")
+    return current_user
+
+
+async def get_current_superuser(current_user: UserInDB = Depends(get_current_active_user)) -> UserInDB:
+    if current_user.role != UserRole.SUPER_ADMIN:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Admin access required",
+        )
     return current_user
 
 def create_user_token(user: UserInDB) -> dict:
