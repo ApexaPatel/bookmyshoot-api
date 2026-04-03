@@ -87,6 +87,25 @@ class PortfolioResponse(BaseModel):
     updated_at: datetime
 
 
+class PhotographerPlanSummary(BaseModel):
+    code: str
+    name: str
+    price_inr: int = 0
+    max_photoshoots: int
+    max_gallery_images: int
+    photoshoots_used: int = 0
+    remaining_photoshoots: int
+    monthly_limit: bool = False
+    plan_started_at: Optional[datetime] = None
+    plan_expires_at: Optional[datetime] = None
+    cycle_ends_at: Optional[datetime] = None
+
+
+class PortfolioListResponse(BaseModel):
+    portfolios: List[PortfolioResponse]
+    plan: PhotographerPlanSummary
+
+
 def serialize_portfolio(doc: dict) -> PortfolioResponse:
     return PortfolioResponse(
         id=str(doc["_id"]),

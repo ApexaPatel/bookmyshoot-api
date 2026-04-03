@@ -1,183 +1,181 @@
-# BookMyShoot - Backend API
+# BookMyShoot Backend
 
-A FastAPI-based backend service for the BookMyShoot platform, connecting photographers with clients for booking photoshoots.
-
-## Features
-
-- **User Authentication**: JWT-based authentication with role-based access control
-- **User Management**: Registration and profile management for customers and photographers
-- **Database**: MongoDB for flexible data storage
-- **Async Support**: Built with async/await for better performance
-- **RESTful API**: Clean, well-documented API endpoints
-- **Environment Configuration**: Easy configuration through environment variables
+FastAPI backend for BookMyShoot. It handles authentication, photographer discovery, organizations, portfolio management, profile media updates, and Cloudinary-based uploads.
 
 ## Tech Stack
+- FastAPI
+- MongoDB + Motor
+- JWT auth
+- Cloudinary
+- Pydantic
 
-- **Framework**: FastAPI
-- **Database**: MongoDB (with Motor for async support)
-- **Authentication**: JWT (JSON Web Tokens)
-- **Password Hashing**: bcrypt
-- **Environment Management**: python-dotenv
-- **Testing**: pytest with pytest-asyncio
+## Implemented Requirements
+### Authentication and user profile
+- Email/password signup and login
+- JWT session restore via `GET /api/auth/me`
+- Photographer and customer roles
+- Organization-aware photographer signup
+- Profile image update
+- Cover image update
+- Photographer bio update
 
-## Prerequisites
+### Photographer discovery
+- Public photographer listing
+- Organization badges and organization lookup in photographer results
+- Public photographer details endpoint
+- Public photographer event and gallery exploration
 
-- Python 3.8+
-- MongoDB (local or MongoDB Atlas)
-- pip (Python package manager)
+### Portfolio management
+- Photographer-only portfolio CRUD
+- Event suggestions API
+- Portfolio gallery validation:
+  - minimum 3 images
+  - maximum 10 images
+  - thumbnail fallback to first image
 
-## Getting Started
+### Organizations explorer
+- List organizations
+- View organization details
+- View photographers inside an organization
 
-### 1. Clone the Repository
+### Media upload
+- Backend `/api/upload` endpoint for multipart image upload
+- Cloudinary upload service
+- MongoDB stores only image URLs
 
+## Key API Endpoints
+### Auth
+| Method | Endpoint | Purpose |
+|---|---|---|
+| `POST` | `/api/auth/signup` | Register user |
+| `POST` | `/api/auth/login` | Login |
+| `GET` | `/api/auth/me` | Restore current session |
+| `PUT` | `/api/auth/profile-image` | Update avatar URL |
+
+### User profile
+| Method | Endpoint | Purpose |
+|---|---|---|
+| `PUT` | `/api/users/cover-image` | Update cover image |
+| `PUT` | `/api/users/bio` | Update photographer bio |
+
+### Upload
+| Method | Endpoint | Purpose |
+|---|---|---|
+| `POST` | `/api/upload` | Upload image to Cloudinary and return `secure_url` |
+
+### Portfolio
+| Method | Endpoint | Purpose |
+|---|---|---|
+| `POST` | `/api/portfolio` | Create portfolio |
+| `GET` | `/api/portfolio` | List logged-in photographer portfolios |
+| `GET` | `/api/portfolio/{id}` | Get one portfolio |
+| `PUT` | `/api/portfolio/{id}` | Update portfolio |
+| `DELETE` | `/api/portfolio/{id}` | Delete portfolio |
+
+### Events and exploration
+| Method | Endpoint | Purpose |
+|---|---|---|
+| `GET` | `/api/events/suggestions` | Distinct event suggestions |
+| `GET` | `/api/organizations` | List organizations |
+| `GET` | `/api/organizations/{id}` | Organization details + photographers |
+| `GET` | `/api/organizations/{id}/photographers` | Photographers in organization |
+| `GET` | `/api/photographers` | Public photographer listing |
+| `GET` | `/api/photographers/{id}` | Public photographer details |
+| `GET` | `/api/photographers/{id}/portfolios` | Public photographer portfolios |
+| `GET` | `/api/photographers/{id}/events` | Distinct photographer events |
+| `GET` | `/api/photographers/{id}/gallery?event=...&location=...` | Event/location filtered gallery |
+
+## Setup
+### 1. Install
 ```bash
-git clone https://github.com/ApexaPatel/bookmyshoot-api.git
-cd bookmyshoot-api/backend
-```
-
-### 2. Set Up Virtual Environment
-
-```bash
-python -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
-```
-
-### 3. Install Dependencies
-
-```bash
+cd /home/latika/Desktop/Demos/bookmyshoot/backend
+python3 -m venv venv
+source venv/bin/activate
 pip install -r requirements.txt
 ```
 
-### 4. Configure Environment Variables
-
-Copy the example environment file and update the values:
-
+### 2. Configure env
 ```bash
 cp .env.example .env
 ```
 
-Edit the `.env` file with your configuration:
-
-```
-# MongoDB Configuration
-MONGODB_URL=your_mongodb_connection_string
-MONGODB_NAME=bookmyshoot
-
-# JWT Configuration
-SECRET_KEY=your-secret-key-here
+Required variables:
+```env
+MONGODB_URL=mongodb://localhost:27017/
+SECRET_KEY=your-secret-key
 ALGORITHM=HS256
-ACCESS_TOKEN_EXPIRE_MINUTES=1440  # 24 hours
+ACCESS_TOKEN_EXPIRE_MINUTES=1440
 
-# App Configuration
-DEBUG=True
-ENVIRONMENT=development
+CLOUD_NAME=your-cloudinary-cloud-name
+API_KEY=your-cloudinary-api-key
+API_SECRET=your-cloudinary-api-secret
 ```
 
-### 5. Run the Application
-
+### 3. Run
 ```bash
-uvicorn main:app --reload
+python3 main.py
 ```
 
-The API will be available at `http://localhost:8000`
+Backend runs on:
+- `http://localhost:3001`
+- Swagger: `http://localhost:3001/docs`
 
-## API Documentation
+## Implementation Notes
+### Data model highlights
+- Users support:
+  - `profile_picture`
+  - `cover_image`
+  - `bio`
+  - `organization_id`
+- Portfolios store:
+  - `event_name`
+  - `shoot_date`
+  - `city`
+  - `destinations`
+  - `days`
+  - `props`
+  - `thumbnail_url`
+  - `gallery[]`
 
-Once the server is running, you can access the interactive API documentation:
+### Upload flow
+1. Frontend uploads image to `/api/upload`
+2. Backend uploads to Cloudinary
+3. Cloudinary `secure_url` is returned
+4. URL is saved on user or portfolio documents
 
-- **Swagger UI**: `http://localhost:3001/docs` (or your configured port)
-- **OpenAPI JSON**: `http://localhost:3001/api/openapi.json`
-
-### Auth & profile image
-
-| Method | Endpoint | Auth | Description |
-|--------|----------|------|-------------|
-| POST | `/api/auth/signup` | No | Register; optional `profile_picture` URL (e.g. from Cloudinary) |
-| POST | `/api/auth/login` | No | Login (form-urlencoded `username`, `password`) |
-| GET | `/api/auth/me` | Bearer | Current user (session restore) |
-| PUT | `/api/auth/profile-image` | Bearer | Update profile image URL only. Body: `{ "profile_picture": "https://..." }` |
-
-Profile images are stored by URL only (e.g. Cloudinary secure URL); the API does not store file blobs.
+### Public photographer gallery flow
+1. Load photographer details
+2. Load distinct events
+3. Filter gallery by event
+4. Optionally filter by one or more locations
 
 ## Project Structure
-
-```
+```text
 backend/
 ├── app/
-│   ├── __init__.py
+│   ├── api/endpoints/
+│   │   ├── auth.py
+│   │   ├── events.py
+│   │   ├── organizations.py
+│   │   ├── photographers.py
+│   │   ├── portfolio.py
+│   │   ├── upload.py
+│   │   └── users.py
 │   ├── core/
-│   │   └── security.py       # Authentication and security utilities
 │   ├── crud/
-│   │   └── user.py           # Database operations for users
 │   ├── db/
-│   │   └── mongodb.py        # Database connection and utilities
-│   └── models/
-│       └── user.py           # Pydantic models and schemas
-├── .env.example              # Example environment variables
-├── .gitignore
-├── main.py                   # FastAPI application entry point
-├── README.md                 # This file
-└── requirements.txt          # Python dependencies
+│   ├── models/
+│   │   ├── organization.py
+│   │   ├── portfolio.py
+│   │   └── user.py
+│   └── services/
+│       └── cloudinary_service.py
+├── main.py
+├── requirements.txt
+└── .env.example
 ```
 
-## Development
-
-### Running Tests
-
-```bash
-pytest
-```
-
-### Code Style
-
-This project uses:
-- Black for code formatting
-- isort for import sorting
-- flake8 for linting
-
-### Pre-commit Hooks
-
-Set up pre-commit hooks to ensure code quality:
-
-```bash
-pip install pre-commit
-pre-commit install
-```
-
-## Deployment
-
-For production deployment, consider using:
-
-- **ASGI Server**: Uvicorn with Gunicorn
-- **Process Manager**: Systemd, Supervisor, or Docker
-- **Reverse Proxy**: Nginx or Traefik
-
-## Environment Variables
-
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `MONGODB_URL` | MongoDB connection string | `mongodb://localhost:27017/` |
-| `MONGODB_NAME` | Database name | `bookmyshoot` |
-| `SECRET_KEY` | Secret key for JWT token signing | - |
-| `ALGORITHM` | Algorithm for JWT | `HS256` |
-| `ACCESS_TOKEN_EXPIRE_MINUTES` | Token expiration time in minutes | `1440` (24h) |
-| `DEBUG` | Enable debug mode | `False` in production |
-| `ENVIRONMENT` | Application environment | `development` |
-
-## Contributing
-
-1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/AmazingFeature`)
-3. Commit your changes (`git commit -m 'Add some AmazingFeature'`)
-4. Push to the branch (`git push origin feature/AmazingFeature`)
-5. Open a Pull Request
-
-## License
-
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
-
-## Acknowledgments
-
-- FastAPI for the awesome framework
-- MongoDB for the flexible database solution
-- All contributors who have helped improve this project
+## Notes
+- Do not commit `.env`
+- Cloudinary secrets must stay backend-only
+- MongoDB connectivity must work for both startup and request-time access

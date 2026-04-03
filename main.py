@@ -18,6 +18,8 @@ from app.core.config import settings
 from app.api import api_router
 from app.db.mongodb import MongoDB, on_startup as mongodb_startup
 from app.services.cloudinary_service import configure_cloudinary
+from app.exceptions.plan_limits import PlanLimitError
+from fastapi.responses import JSONResponse
 
 # Load environment variables
 load_dotenv()
@@ -42,6 +44,18 @@ app.add_middleware(
 # Include the API router
 app.include_router(api_router, prefix=settings.API_V1_STR)
 configure_cloudinary()
+
+
+@app.exception_handler(PlanLimitError)
+async def plan_limit_exception_handler(request: Request, exc: PlanLimitError):
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={
+            "success": False,
+            "errorCode": exc.error_code,
+            "message": exc.message,
+        },
+    )
 
 
 @app.on_event("startup")

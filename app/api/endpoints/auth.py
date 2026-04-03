@@ -64,6 +64,9 @@ async def signup(
     user_data.setdefault("is_active", True)
     user_data.setdefault("is_verified", False)
     user_data.setdefault("role", "customer")
+    user_data.setdefault("photographer_plan", "free")
+    user_data.setdefault("plan_started_at", None)
+    user_data.setdefault("plan_expires_at", None)
     user_data.setdefault("preferences", {})
     now = datetime.utcnow()
     user_data["created_at"] = now
