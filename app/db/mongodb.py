@@ -81,7 +81,7 @@ class MongoDB:
         except Exception as e:
             # Clean up on error
             if cls._client:
-                await cls._client.close()
+                cls._client.close()
                 cls._client = None
             raise ConnectionError(f"Failed to connect to MongoDB: {str(e)}")
             
@@ -106,7 +106,7 @@ class MongoDB:
         """Safely close the MongoDB connection."""
         if cls._client:
             try:
-                await cls._client.close()
+                cls._client.close()
                 print("✅ MongoDB connection closed")
             except Exception as e:
                 print(f"⚠️  Error closing MongoDB connection: {str(e)}")
