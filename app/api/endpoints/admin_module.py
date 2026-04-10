@@ -33,7 +33,8 @@ class DashboardSummary(BaseModel):
 
 class DashboardGraphPoint(BaseModel):
     date: str
-    registrations: int
+    photographers: int
+    customers: int
     shoots: int
     subscriptions: int
 
@@ -135,7 +136,17 @@ async def dashboard_graph(
 
     user_pipeline = [
         {"$match": {"created_at": {"$gte": start}, "is_deleted": {"$ne": True}}},
-        {"$group": {"_id": {"$dateToString": {"format": "%Y-%m-%d", "date": "$created_at"}}, "count": {"$sum": 1}}},
+        {
+            "$group": {
+                "_id": {"$dateToString": {"format": "%Y-%m-%d", "date": "$created_at"}},
+                "photographers": {
+                    "$sum": {"$cond": [{"$eq": ["$role", UserRole.PHOTOGRAPHER.value]}, 1, 0]}
+                },
+                "customers": {
+                    "$sum": {"$cond": [{"$eq": ["$role", UserRole.CUSTOMER.value]}, 1, 0]}
+                },
+            }
+        },
     ]
     booking_pipeline = [
         {"$match": {"created_at": {"$gte": start}}},
@@ -150,7 +161,13 @@ async def dashboard_graph(
     booking_rows = await bookings.aggregate(booking_pipeline).to_list(length=60)
     subscription_rows = await subscriptions.aggregate(subscription_pipeline).to_list(length=60)
 
-    user_map = {r["_id"]: int(r["count"]) for r in user_rows}
+    user_map = {
+        r["_id"]: {
+            "photographers": int(r.get("photographers") or 0),
+            "customers": int(r.get("customers") or 0),
+        }
+        for r in user_rows
+    }
     booking_map = {r["_id"]: int(r["count"]) for r in booking_rows}
     subscription_map = {r["_id"]: int(r["count"]) for r in subscription_rows}
 
@@ -161,7 +178,8 @@ async def dashboard_graph(
         out.append(
             DashboardGraphPoint(
                 date=key,
-                registrations=user_map.get(key, 0),
+                photographers=user_map.get(key, {}).get("photographers", 0),
+                customers=user_map.get(key, {}).get("customers", 0),
                 shoots=booking_map.get(key, 0),
                 subscriptions=subscription_map.get(key, 0),
             )
