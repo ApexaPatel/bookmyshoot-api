@@ -9,6 +9,8 @@ from .event import EventType
 
 class UserRole(str, Enum):
     SUPER_ADMIN = "super_admin"
+    ADMIN = "admin"
+    STAFF = "staff"
     CUSTOMER = "customer"
     PHOTOGRAPHER = "photographer"
 

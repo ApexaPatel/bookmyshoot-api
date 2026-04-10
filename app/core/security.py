@@ -61,6 +61,15 @@ async def get_current_superuser(current_user: UserInDB = Depends(get_current_act
         )
     return current_user
 
+
+async def get_current_admin_user(current_user: UserInDB = Depends(get_current_active_user)) -> UserInDB:
+    if current_user.role not in [UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.STAFF]:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Admin access required",
+        )
+    return current_user
+
 def create_user_token(user: UserInDB) -> dict:
     """Create an access token for the user."""
     access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)

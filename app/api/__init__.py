@@ -1,5 +1,6 @@
 from fastapi import APIRouter
 from app.api.endpoints import (
+    admin_module,
     admin_subscriptions,
     auth,
     events,
@@ -21,3 +22,4 @@ api_router.include_router(organizations.router, prefix="/organizations", tags=["
 api_router.include_router(photographers.router, prefix="/photographers", tags=["photographers"])
 api_router.include_router(simulate_payment.router, tags=["demo-billing"])
 api_router.include_router(admin_subscriptions.router, tags=["admin"])
+api_router.include_router(admin_module.router, tags=["admin-module"])
