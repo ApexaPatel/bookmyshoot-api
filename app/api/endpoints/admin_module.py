@@ -28,6 +28,7 @@ class DashboardSummary(BaseModel):
     new_photographers: int
     new_customers: int
     subscriptions_count: int
+    memberships_count: int
     total_shoots_booked: int
 
 
@@ -106,6 +107,100 @@ class PastShootCreate(BaseModel):
     date: datetime
 
 
+class PlanUpdateBody(BaseModel):
+    price: Optional[float] = Field(None, ge=0)
+    billing_cycle: Optional[str] = None
+    features: Optional[List[str]] = None
+    is_active: Optional[bool] = None
+    max_bids: Optional[int] = Field(None, ge=0)
+    portfolio_limit: Optional[int] = Field(None, ge=0)
+    priority_weight: Optional[int] = Field(None, ge=0)
+
+
+class MembershipUpdateBody(BaseModel):
+    price: Optional[float] = Field(None, ge=0)
+    duration_days: Optional[int] = Field(None, ge=1)
+    features: Optional[List[str]] = None
+    is_active: Optional[bool] = None
+
+
+def _default_plans() -> List[Dict[str, Any]]:
+    now = datetime.utcnow()
+    return [
+        {
+            "id": "free",
+            "name": "free",
+            "price": 0,
+            "billing_cycle": "monthly",
+            "features": ["basic_profile", "direct_booking", "limited_visibility", "portfolio_10_shoots_5_images"],
+            "is_active": True,
+            "max_bids": 0,
+            "portfolio_limit": 10,
+            "priority_weight": 0,
+            "created_at": now,
+            "updated_at": now,
+        },
+        {
+            "id": "pro",
+            "name": "pro",
+            "price": 299,
+            "billing_cycle": "monthly",
+            "features": ["access_auction", "place_bid", "multiple_bids", "higher_visibility", "portfolio_extended"],
+            "is_active": True,
+            "max_bids": 20,
+            "portfolio_limit": 20,
+            "priority_weight": 0,
+            "created_at": now,
+            "updated_at": now,
+        },
+        {
+            "id": "premium",
+            "name": "premium",
+            "price": 399,
+            "billing_cycle": "monthly",
+            "features": [
+                "access_auction",
+                "place_bid",
+                "priority_ranking",
+                "high_visibility",
+                "advanced_analytics",
+                "featured_badge",
+            ],
+            "is_active": True,
+            "max_bids": 9999,
+            "portfolio_limit": 28,
+            "priority_weight": 15,
+            "created_at": now,
+            "updated_at": now,
+        },
+    ]
+
+
+def _default_membership() -> Dict[str, Any]:
+    now = datetime.utcnow()
+    return {
+        "id": "membership",
+        "price": 999,
+        "duration_days": 365,
+        "features": ["10_percent_discount", "auction_access", "priority_booking_experience"],
+        "is_active": True,
+        "updated_at": now,
+        "created_at": now,
+    }
+
+
+async def _ensure_plan_membership_seed(db: Database) -> None:
+    plans_col = db["plans"]
+    for plan in _default_plans():
+        existing = await plans_col.find_one({"name": plan["name"]})
+        if not existing:
+            await plans_col.insert_one(plan)
+    membership_col = db["membership_config"]
+    existing_membership = await membership_col.find_one({"id": "membership"})
+    if not existing_membership:
+        await membership_col.insert_one(_default_membership())
+
+
 @router.get("/dashboard/summary", response_model=DashboardSummary)
 async def dashboard_summary(
     _: UserInDB = Depends(get_current_admin_user),
@@ -117,6 +212,7 @@ async def dashboard_summary(
     users = db["users"]
     bookings = db["bookings"]
     subscriptions = db["subscriptions"]
+    ledger = db["payments_ledger"]
 
     new_photographers = await users.count_documents(
         {
@@ -135,12 +231,16 @@ async def dashboard_summary(
     subscriptions_count = await subscriptions.count_documents(
         {"created_at": {"$gte": month_start}, "status": "success"}
     )
+    memberships_count = await ledger.count_documents(
+        {"type": "membership", "direction": "credit", "created_at": {"$gte": month_start}}
+    )
     total_shoots_booked = await bookings.count_documents({"created_at": {"$gte": month_start}})
 
     return DashboardSummary(
         new_photographers=new_photographers,
         new_customers=new_customers,
         subscriptions_count=subscriptions_count,
+        memberships_count=memberships_count,
         total_shoots_booked=total_shoots_booked,
     )
 
@@ -366,6 +466,29 @@ async def list_photographers(
     return PagedResponse(total=total, page=page, limit=limit, items=rows)
 
 
+@router.get("/photographers/plan-stats")
+async def photographer_plan_stats(
+    _: UserInDB = Depends(get_current_admin_user),
+    db: Database = Depends(get_database),
+):
+    users = db["users"]
+    query = {"is_deleted": {"$ne": True}, "role": UserRole.PHOTOGRAPHER.value}
+    free_count = await users.count_documents({**query, "photographer_plan": "free"})
+    pro_count = await users.count_documents({**query, "photographer_plan": "pro"})
+    premium_count = await users.count_documents({**query, "photographer_plan": "premium"})
+    paid_count = pro_count + premium_count
+    total = free_count + paid_count
+    conversion_rate = round((paid_count / total) * 100, 1) if total > 0 else 0.0
+    return {
+        "free": free_count,
+        "pro": pro_count,
+        "premium": premium_count,
+        "paid": paid_count,
+        "total": total,
+        "conversion_rate": conversion_rate,
+    }
+
+
 @router.post("/photographers")
 async def create_photographer_admin(
     payload: AdminUserCreate,
@@ -406,6 +529,7 @@ async def payments_summary(
     subscriptions = db["subscriptions"]
     bookings = db["bookings"]
     expenses = db["expenses"]
+    ledger = db["payments_ledger"]
 
     sub_month = await subscriptions.aggregate(
         [{"$match": {"created_at": {"$gte": month_start}, "status": "success"}}, {"$group": {"_id": None, "v": {"$sum": "$amount"}}}]
@@ -413,11 +537,16 @@ async def payments_summary(
     photo_month = await bookings.aggregate(
         [{"$match": {"created_at": {"$gte": month_start}}}, {"$group": {"_id": None, "v": {"$sum": "$total_amount"}}}]
     ).to_list(length=1)
+    membership_month = await ledger.aggregate(
+        [{"$match": {"created_at": {"$gte": month_start}, "type": "membership", "direction": "credit"}}, {"$group": {"_id": None, "v": {"$sum": "$amount"}}}]
+    ).to_list(length=1)
     exp_month = await expenses.aggregate(
         [{"$match": {"created_at": {"$gte": month_start}, "is_deleted": {"$ne": True}}}, {"$group": {"_id": None, "v": {"$sum": "$amount"}}}]
     ).to_list(length=1)
 
-    total_revenue = float((sub_month[0]["v"] if sub_month else 0) or 0)
+    subscription_revenue = float((sub_month[0]["v"] if sub_month else 0) or 0)
+    membership_revenue = float((membership_month[0]["v"] if membership_month else 0) or 0)
+    total_revenue = subscription_revenue + membership_revenue
     photoshoot_revenue = float((photo_month[0]["v"] if photo_month else 0) or 0)
     total_expenses = float((exp_month[0]["v"] if exp_month else 0) or 0)
     current_balance = total_revenue + photoshoot_revenue - total_expenses
@@ -425,6 +554,8 @@ async def payments_summary(
     return {
         "current_balance": current_balance,
         "total_revenue_month": total_revenue,
+        "subscription_revenue_month": subscription_revenue,
+        "membership_revenue_month": membership_revenue,
         "total_expenses_month": total_expenses,
         "photoshoot_revenue_month": photoshoot_revenue,
     }
@@ -441,7 +572,17 @@ async def payments_subscriptions(
     col = db["subscriptions"]
     total = await col.count_documents({})
     rows = await col.find().sort("created_at", -1).skip(skip).limit(limit).to_list(length=limit)
+    user_ids: List[ObjectId] = []
+    for row in rows:
+        uid = row.get("user_id")
+        if isinstance(uid, str) and ObjectId.is_valid(uid):
+            user_ids.append(ObjectId(uid))
+    user_docs = await db["users"].find({"_id": {"$in": user_ids}}, {"full_name": 1, "email": 1}).to_list(length=max(1, len(user_ids)))
+    user_map = {str(u["_id"]): u for u in user_docs}
     for r in rows:
+        user_doc = user_map.get(str(r.get("user_id")) or "")
+        r["user_email"] = (user_doc or {}).get("email")
+        r["user_name"] = (user_doc or {}).get("full_name")
         r["id"] = str(r.pop("_id"))
     return {"total": total, "page": page, "limit": limit, "items": rows}
 
@@ -477,6 +618,119 @@ async def payments_expenses(
     for r in rows:
         r["id"] = str(r.pop("_id"))
     return {"total": total, "page": page, "limit": limit, "items": rows}
+
+
+@router.get("/payments/memberships")
+async def payments_memberships(
+    page: int = Query(1, ge=1),
+    limit: int = Query(10, ge=1, le=100),
+    status: Optional[str] = Query(None),
+    search: Optional[str] = Query(None),
+    from_date: Optional[datetime] = Query(None),
+    to_date: Optional[datetime] = Query(None),
+    _: UserInDB = Depends(get_current_admin_user),
+    db: Database = Depends(get_database),
+):
+    users = db["users"]
+    membership_cfg = await db["membership_config"].find_one({"id": "membership"}) or {}
+    membership_price = float(membership_cfg.get("price") or 999)
+    membership_duration_days = int(membership_cfg.get("duration_days") or 365)
+    query: Dict[str, Any] = {"type": "membership", "direction": "credit"}
+    if from_date or to_date:
+        created_filter: Dict[str, Any] = {}
+        if from_date:
+            created_filter["$gte"] = from_date
+        if to_date:
+            created_filter["$lte"] = to_date
+        query["created_at"] = created_filter
+
+    col = db["payments_ledger"]
+    rows = await col.find(query).sort("created_at", -1).to_list(length=5000)
+    user_ids = []
+    for row in rows:
+        user_id = row.get("user_id")
+        if isinstance(user_id, ObjectId):
+            user_ids.append(user_id)
+    user_docs = await users.find({"_id": {"$in": user_ids}}).to_list(length=max(1, len(user_ids)))
+    user_map = {str(u["_id"]): u for u in user_docs}
+
+    filtered: List[Dict[str, Any]] = []
+    for row in rows:
+        uid = row.get("user_id")
+        uid_str = str(uid) if uid else None
+        user_doc = user_map.get(uid_str or "")
+        expiry = user_doc.get("membership_expiry") if user_doc else None
+        calculated_status = "active" if (expiry and expiry > datetime.utcnow()) else "expired"
+        out = {
+            "id": str(row.get("_id")),
+            "user_id": uid_str,
+            "user_name": (user_doc or {}).get("full_name"),
+            "user_email": (user_doc or {}).get("email"),
+            "plan": "Membership",
+            "plan_price": membership_price,
+            "plan_duration_days": membership_duration_days,
+            "amount_paid": float(row.get("amount") or 0),
+            "purchase_date": row.get("created_at"),
+            "expiry_date": expiry,
+            "status": calculated_status,
+            "created_at": row.get("created_at"),
+        }
+        if search:
+            q = search.lower()
+            if q not in str(out.get("user_name") or "").lower() and q not in str(out.get("user_email") or "").lower():
+                continue
+        if status and out["status"] != status:
+            continue
+        filtered.append(out)
+
+    total = len(filtered)
+    skip = (page - 1) * limit
+    items = filtered[skip : skip + limit]
+    return {"total": total, "page": page, "limit": limit, "items": items}
+
+
+@router.get("/revenue-summary")
+async def revenue_summary(
+    _: UserInDB = Depends(get_current_admin_user),
+    db: Database = Depends(get_database),
+):
+    subscriptions = db["subscriptions"]
+    ledger = db["payments_ledger"]
+    sub_total = await subscriptions.aggregate(
+        [{"$match": {"status": "success"}}, {"$group": {"_id": None, "v": {"$sum": "$amount"}}}]
+    ).to_list(length=1)
+    membership_total = await ledger.aggregate(
+        [{"$match": {"type": "membership", "direction": "credit"}}, {"$group": {"_id": None, "v": {"$sum": "$amount"}}}]
+    ).to_list(length=1)
+    subscription_revenue = float((sub_total[0]["v"] if sub_total else 0) or 0)
+    membership_revenue = float((membership_total[0]["v"] if membership_total else 0) or 0)
+    return {
+        "subscription_revenue": subscription_revenue,
+        "membership_revenue": membership_revenue,
+        "total_revenue": subscription_revenue + membership_revenue,
+    }
+
+
+@router.get("/membership-stats")
+async def membership_stats(
+    _: UserInDB = Depends(get_current_admin_user),
+    db: Database = Depends(get_database),
+):
+    ledger = db["payments_ledger"]
+    now = datetime.utcnow()
+    this_month_start = _month_start(now)
+    prev_month_end = this_month_start - timedelta(microseconds=1)
+    prev_month_start = prev_month_end.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    this_month_memberships = await ledger.count_documents(
+        {"type": "membership", "direction": "credit", "created_at": {"$gte": this_month_start}}
+    )
+    last_month_memberships = await ledger.count_documents(
+        {"type": "membership", "direction": "credit", "created_at": {"$gte": prev_month_start, "$lt": this_month_start}}
+    )
+    return {
+        "this_month_memberships": this_month_memberships,
+        "last_month_memberships": last_month_memberships,
+    }
 
 
 @router.post("/expenses")
@@ -606,3 +860,95 @@ async def pricing_stats(
     ).to_list(length=200)
     demand = [{"event_type": str(r.get("_id") or "unknown"), "avg_price": float(r.get("avg_price") or 0), "count": int(r.get("count") or 0)} for r in rows]
     return {"event_pricing": demand}
+
+
+@router.get("/plans")
+async def get_plans(
+    _: UserInDB = Depends(get_current_admin_user),
+    db: Database = Depends(get_database),
+):
+    await _ensure_plan_membership_seed(db)
+    rows = await db["plans"].find({}).sort("updated_at", -1).to_list(length=100)
+    unique_by_name: Dict[str, Dict[str, Any]] = {}
+    for row in rows:
+        name = str(row.get("name") or "").strip().lower()
+        if not name or name in unique_by_name:
+            continue
+        row["mongo_id"] = str(row.pop("_id"))
+        unique_by_name[name] = row
+    ordered_names = ["free", "pro", "premium"]
+    items = [unique_by_name[n] for n in ordered_names if n in unique_by_name]
+    return {"items": items}
+
+
+@router.put("/plans/{plan_id}")
+async def update_plan(
+    plan_id: str,
+    payload: PlanUpdateBody,
+    _: UserInDB = Depends(get_current_admin_user),
+    db: Database = Depends(get_database),
+):
+    await _ensure_plan_membership_seed(db)
+    allowed = {"free", "pro", "premium"}
+    plan_key = plan_id.strip().lower()
+    if plan_key not in allowed:
+        raise HTTPException(status_code=400, detail="Invalid plan id")
+    updates = {k: v for k, v in payload.dict(exclude_unset=True).items() if v is not None}
+    if not updates:
+        return {"message": "No changes"}
+    updates["updated_at"] = datetime.utcnow()
+    res = await db["plans"].update_one({"name": plan_key}, {"$set": updates})
+    if res.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Plan not found")
+    if plan_key in {"pro", "premium"} and any(k in updates for k in ["max_bids", "priority_weight"]):
+        auction_set: Dict[str, Any] = {}
+        if "max_bids" in updates:
+            auction_set[f"bid_limits.{plan_key}"] = int(updates["max_bids"])
+        if "priority_weight" in updates:
+            auction_set[f"ranking_weights.{plan_key}"] = int(updates["priority_weight"])
+        if auction_set:
+            await db["settings"].update_one(
+                {"key": "auction_config"},
+                {"$set": {"key": "auction_config", **auction_set, "updated_at": datetime.utcnow()}},
+                upsert=True,
+            )
+    return {"message": "Plan updated"}
+
+
+@router.get("/membership")
+async def get_membership_config(
+    _: UserInDB = Depends(get_current_admin_user),
+    db: Database = Depends(get_database),
+):
+    await _ensure_plan_membership_seed(db)
+    config = await db["membership_config"].find_one({"id": "membership"})
+    if not config:
+        raise HTTPException(status_code=404, detail="Membership config not found")
+    config["mongo_id"] = str(config.pop("_id"))
+    users = db["users"]
+    active_members = await users.count_documents(
+        {"is_member": True, "membership_expiry": {"$gt": datetime.utcnow()}, "is_deleted": {"$ne": True}}
+    )
+    revenue_rows = await db["payments_ledger"].aggregate(
+        [{"$match": {"type": "membership", "direction": "credit"}}, {"$group": {"_id": None, "v": {"$sum": "$amount"}}}]
+    ).to_list(length=1)
+    total_revenue = float((revenue_rows[0]["v"] if revenue_rows else 0) or 0)
+    return {
+        "config": config,
+        "metrics": {"active_members": active_members, "total_revenue": total_revenue},
+    }
+
+
+@router.put("/membership")
+async def update_membership_config(
+    payload: MembershipUpdateBody,
+    _: UserInDB = Depends(get_current_admin_user),
+    db: Database = Depends(get_database),
+):
+    await _ensure_plan_membership_seed(db)
+    updates = {k: v for k, v in payload.dict(exclude_unset=True).items() if v is not None}
+    if not updates:
+        return {"message": "No changes"}
+    updates["updated_at"] = datetime.utcnow()
+    await db["membership_config"].update_one({"id": "membership"}, {"$set": updates}, upsert=True)
+    return {"message": "Membership config updated"}

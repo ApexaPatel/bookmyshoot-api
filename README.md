@@ -1,6 +1,6 @@
 # BookMyShoot Backend
 
-FastAPI backend for BookMyShoot. It handles authentication, photographer discovery, organizations, portfolio management, profile media updates, and Cloudinary-based uploads.
+FastAPI backend for BookMyShoot. It handles authentication, photographer discovery, organizations, portfolio management, profile media updates, admin operations, simulated subscription/membership billing, quotations, reviews, and auction-based booking.
 
 ## Tech Stack
 - FastAPI
@@ -68,13 +68,38 @@ FastAPI backend for BookMyShoot. It handles authentication, photographer discove
 |---|---|---|
 | `POST` | `/api/simulate-payment` | Body: `plan` (`pro` \| `premium`), `simulate_success` (bool). Records a row in `subscriptions`, upgrades user plan + 30-day window when successful. |
 
-### Admin (requires `role: super_admin`)
+### Membership and auctions
+| Method | Endpoint | Purpose |
+|---|---|---|
+| `POST` | `/api/membership/purchase` | Simulated membership purchase (price/duration pulled from `membership_config`) |
+| `POST` | `/api/auction/create` | Customer creates auction event |
+| `GET` | `/api/auction/list` | List auctions (Pro/Premium photographers only for marketplace view) |
+| `POST` | `/api/auction/bid` | Place/update bid (Pro/Premium photographers only) |
+| `GET` | `/api/auction/{event_id}/bids` | Auction owner views bids |
+| `POST` | `/api/auction/select` | Auction owner finalizes winner |
+| `POST` | `/api/auction/cancel` | Auction owner cancels open auction |
+
+### Admin (requires `role: super_admin` / `admin` / `staff`)
 | Method | Endpoint | Purpose |
 |---|---|---|
 | `GET` | `/api/admin/subscriptions/metrics` | Total / active subscription records and sum of successful demo amounts (INR) |
 | `GET` | `/api/admin/subscriptions` | Table data: user, plan, amounts, status, payment id, dates |
+| `GET` | `/api/admin/dashboard/summary` | Dashboard KPI summary including monthly memberships purchased |
+| `GET` | `/api/admin/dashboard/graph` | 30-day trend graph data |
+| `GET` | `/api/admin/users` | User management list |
+| `GET` | `/api/admin/photographers` | Photographer management list |
+| `GET` | `/api/admin/payments/subscriptions` | Subscription payments list |
+| `GET` | `/api/admin/payments/memberships` | Membership payments list with status/filter support |
+| `GET` | `/api/admin/payments/photoshoots` | Photoshoot payments list |
+| `GET` | `/api/admin/payments/expenses` | Expenses list |
+| `GET` | `/api/admin/payments/summary` | Monthly balance/revenue summary (subscription + membership + photoshoots - expenses) |
+| `GET` | `/api/admin/revenue-summary` | Lifetime revenue split: subscription vs membership |
+| `GET` | `/api/admin/plans` | Photographer plan configuration list (Free/Pro/Premium) |
+| `PUT` | `/api/admin/plans/{plan_id}` | Update plan settings/price/activation |
+| `GET` | `/api/admin/membership` | Membership config and aggregate metrics |
+| `PUT` | `/api/admin/membership` | Update membership config |
 
-To grant admin access, set a user’s `role` to `super_admin` in MongoDB (e.g. Compass or `mongosh`).
+To grant admin access, set a user’s `role` to `super_admin`, `admin`, or `staff` in MongoDB.
 
 ### Portfolio
 | Method | Endpoint | Purpose |
@@ -101,7 +126,7 @@ To grant admin access, set a user’s `role` to `super_admin` in MongoDB (e.g. C
 ## Setup
 ### 1. Install
 ```bash
-cd /home/latika/Desktop/Demos/bookmyshoot/backend
+cd bookmyshoot-api
 python3 -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
@@ -128,20 +153,15 @@ API_SECRET=your-cloudinary-api-secret
 Use the **same Python environment** where you ran `pip install -r requirements.txt`.
 
 ```bash
-cd /path/to/bookmyshoot/backend
+cd bookmyshoot-api
 source venv/bin/activate
 python3 main.py
 ```
 
 Or, without activating (venv created in `backend` as in step 1):
 ```bash
-cd /path/to/bookmyshoot/backend
+cd bookmyshoot-api
 ./venv/bin/python main.py
-```
-
-If your virtualenv lives at the **repository root** (e.g. `bookmyshoot/venv`), use that interpreter instead:
-```bash
-/path/to/bookmyshoot/venv/bin/python main.py
 ```
 
 Backend runs on:

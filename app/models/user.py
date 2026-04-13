@@ -42,6 +42,9 @@ class UserBase(BaseModel):
     photographer_plan: PhotographerPlan = Field(PhotographerPlan.FREE, description="Photographer subscription plan")
     plan_started_at: Optional[datetime] = Field(None, description="Start date for paid photographer plans")
     plan_expires_at: Optional[datetime] = Field(None, description="Expiry date for paid photographer plans")
+    is_member: bool = Field(False, description="Whether user has active marketplace membership")
+    membership_start: Optional[datetime] = Field(None, description="Membership start date")
+    membership_expiry: Optional[datetime] = Field(None, description="Membership expiry date")
     is_part_of_organization: bool = Field(False, description="True if photographer belongs to an organization")
     organization_id: Optional[str] = Field(None, description="Reference to Organization _id")
     preferences: Dict[str, Any] = Field(default_factory=dict, 
