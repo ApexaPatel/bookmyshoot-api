@@ -1,15 +1,70 @@
 from datetime import datetime, timedelta
 from typing import Optional
+import os
+import secrets
+import smtplib
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordRequestForm
+from pydantic import BaseModel, EmailStr, Field
+from pymongo.database import Database
 
 from app.core import create_access_token, get_password_hash, get_current_active_user
 from app.core.config import settings
 from app.crud.user import CRUDUser, get_user_crud
 from app.crud.organization import CRUDOrganization, get_organization_crud
+from app.db.mongodb import get_database
 from app.models.user import UserCreate, UserInDB, UserResponse, Token, ProfileImageUpdate
 
 router = APIRouter()
+
+
+class ForgotPasswordRequest(BaseModel):
+    email: EmailStr
+
+
+class ResetPasswordRequest(BaseModel):
+    token: str = Field(..., min_length=10)
+    new_password: str = Field(..., min_length=8, max_length=100)
+
+
+def send_reset_email(to_email: str, token: str) -> None:
+    smtp_server = os.getenv("SMTP_SERVER")
+    smtp_port = int(os.getenv("SMTP_PORT", "587"))
+    username = os.getenv("EMAIL_USERNAME")
+    password = os.getenv("EMAIL_PASSWORD")
+    frontend_url = os.getenv("FRONTEND_URL", "http://localhost:5173")
+
+    if not (smtp_server and username and password):
+        # Keep this non-blocking for local dev if SMTP is not configured.
+        print("⚠️  SMTP not configured; skipping reset email send.")
+        return
+
+    reset_link = f"{frontend_url}/reset-password?token={token}"
+    subject = "Reset Your Password"
+    html_body = f"""
+    <html>
+      <body>
+        <p>Hi,</p>
+        <p>Click the link below to reset your password:</p>
+        <p><a href="{reset_link}">Reset Password</a></p>
+        <p>This link will expire in 15 minutes.</p>
+        <p>If you did not request this, you can ignore this email.</p>
+      </body>
+    </html>
+    """
+
+    msg = MIMEMultipart("alternative")
+    msg["Subject"] = subject
+    msg["From"] = username
+    msg["To"] = to_email
+    msg.attach(MIMEText(html_body, "html"))
+
+    with smtplib.SMTP(smtp_server, smtp_port) as server:
+        server.starttls()
+        server.login(username, password)
+        server.sendmail(username, [to_email], msg.as_string())
 
 
 @router.get("/me", response_model=UserResponse)
@@ -126,3 +181,52 @@ async def login(
         "expires_in": int(access_token_expires.total_seconds()),
         "user": user_response
     }
+
+
+@router.post("/forgot-password")
+async def forgot_password(
+    payload: ForgotPasswordRequest,
+    db: Database = Depends(get_database),
+):
+    users = db["users"]
+    user = await users.find_one({"email": payload.email.lower()})
+
+    if user:
+        token = secrets.token_urlsafe(32)
+        expiry = datetime.utcnow() + timedelta(minutes=15)
+        await users.update_one(
+            {"_id": user["_id"]},
+            {"$set": {"reset_token": token, "reset_token_expiry": expiry, "updated_at": datetime.utcnow()}},
+        )
+        try:
+            send_reset_email(payload.email.lower(), token)
+        except Exception as e:
+            # Don't leak internals to client; log for diagnostics.
+            print(f"⚠️  Failed to send reset email: {str(e)}")
+
+    return {"message": "If email exists, reset link sent"}
+
+
+@router.post("/reset-password")
+async def reset_password(
+    payload: ResetPasswordRequest,
+    db: Database = Depends(get_database),
+):
+    users = db["users"]
+    user = await users.find_one({"reset_token": payload.token})
+    if not user:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid or expired link")
+
+    expiry = user.get("reset_token_expiry")
+    if not expiry or datetime.utcnow() > expiry:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Link expired, request again")
+
+    hashed_password = get_password_hash(payload.new_password)
+    await users.update_one(
+        {"_id": user["_id"]},
+        {
+            "$set": {"hashed_password": hashed_password, "updated_at": datetime.utcnow()},
+            "$unset": {"reset_token": "", "reset_token_expiry": ""},
+        },
+    )
+    return {"message": "Password reset successfully"}
