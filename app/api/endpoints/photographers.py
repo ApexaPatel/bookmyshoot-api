@@ -107,17 +107,67 @@ async def list_photographers(db: Database = Depends(get_database)):
             }
         },
         {
+            "$lookup": {
+                "from": "portfolios",
+                "let": {"uid": "$_id"},
+                "pipeline": [
+                    {"$match": {"$expr": {"$eq": ["$user_id", "$$uid"]}}},
+                    {"$project": {"event_name": 1, "city": 1, "destinations": 1}},
+                ],
+                "as": "_portfolios",
+            }
+        },
+        {
+            "$addFields": {
+                "portfolio_events": {
+                    "$map": {
+                        "input": "$_portfolios",
+                        "as": "p",
+                        "in": {"$toLower": {"$trim": {"input": {"$ifNull": ["$$p.event_name", ""]}}}},
+                    }
+                },
+                "portfolio_cities": {
+                    "$filter": {
+                        "input": {
+                            "$reduce": {
+                                "input": "$_portfolios",
+                                "initialValue": [],
+                                "in": {
+                                    "$concatArrays": [
+                                        "$$value",
+                                        [{"$toLower": {"$trim": {"input": {"$ifNull": ["$$this.city", ""]}}}}],
+                                        {
+                                            "$map": {
+                                                "input": {"$ifNull": ["$$this.destinations", []]},
+                                                "as": "d",
+                                                "in": {"$toLower": {"$trim": {"input": "$$d"}}},
+                                            }
+                                        },
+                                    ]
+                                },
+                            }
+                        },
+                        "as": "x",
+                        "cond": {"$gt": [{"$strLenCP": "$$x"}, 0]},
+                    }
+                },
+            }
+        },
+        {
             "$project": {
                 "_id": 1,
                 "full_name": 1,
                 "email": 1,
                 "bio": 1,
+                "location": 1,
                 "profile_picture": 1,
                 "cover_image": 1,
                 "rating": 1,
                 "total_reviews": 1,
                 "is_part_of_organization": 1,
                 "organization_id": 1,
+                "portfolio_events": 1,
+                "portfolio_cities": 1,
                 "organizationId": {
                     "$cond": {
                         "if": {"$eq": [{"$size": "$_org"}, 1]},
@@ -134,11 +184,16 @@ async def list_photographers(db: Database = Depends(get_database)):
     cursor = users.aggregate(pipeline)
     photographers: List[dict] = []
     async for doc in cursor:
+        raw_events = doc.get("portfolio_events") or []
+        portfolio_events = sorted({str(x).strip().lower() for x in raw_events if str(x).strip()})
+        raw_cities = doc.get("portfolio_cities") or []
+        portfolio_cities = sorted({str(x).strip().lower() for x in raw_cities if str(x).strip()})
         photographers.append({
             "id": str(doc["_id"]),
             "name": doc.get("full_name") or doc.get("name", ""),
             "email": doc.get("email", ""),
             "bio": doc.get("bio"),
+            "location": (doc.get("location") or "").strip() or None,
             "profile_picture": doc.get("profile_picture"),
             "cover_image": doc.get("cover_image"),
             "rating": float(doc.get("rating") or 0),
@@ -146,6 +201,8 @@ async def list_photographers(db: Database = Depends(get_database)):
             "is_part_of_organization": doc.get("is_part_of_organization", False),
             "organization_id": str(doc["organization_id"]) if doc.get("organization_id") else None,
             "organizationId": doc.get("organizationId"),
+            "portfolio_events": portfolio_events,
+            "portfolio_cities": portfolio_cities,
         })
     return {"photographers": photographers}
 
