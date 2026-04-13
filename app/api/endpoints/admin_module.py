@@ -83,6 +83,29 @@ class ExpenseUpdate(BaseModel):
     description: Optional[str] = None
 
 
+class PhotographerPricingUpdate(BaseModel):
+    base_price: Optional[float] = None
+    price_per_hour: Optional[float] = None
+    base_prices: Optional[Dict[str, float]] = None
+    location_multipliers: Optional[Dict[str, float]] = None
+    feature_prices: Optional[Dict[str, float]] = None
+    tags: Optional[List[str]] = None
+    event_specialties: Optional[List[str]] = None
+    service_locations: Optional[List[str]] = None
+    rating: Optional[float] = None
+    experience_years: Optional[int] = None
+
+
+class PastShootCreate(BaseModel):
+    photographer_id: str
+    event_type: str
+    location: str
+    duration_hours: float = Field(..., gt=0)
+    features: List[str] = Field(default_factory=list)
+    final_price: float = Field(..., gt=0)
+    date: datetime
+
+
 @router.get("/dashboard/summary", response_model=DashboardSummary)
 async def dashboard_summary(
     _: UserInDB = Depends(get_current_admin_user),
@@ -517,3 +540,69 @@ async def delete_expense(
     if res.matched_count == 0:
         raise HTTPException(status_code=404, detail="Expense not found")
     return {"message": "Expense soft deleted"}
+
+
+@router.patch("/photographers/{user_id}/pricing")
+async def update_photographer_pricing(
+    user_id: str,
+    payload: PhotographerPricingUpdate,
+    _: UserInDB = Depends(get_current_admin_user),
+    db: Database = Depends(get_database),
+):
+    updates = {k: v for k, v in payload.dict(exclude_unset=True).items() if v is not None}
+    if not updates:
+        return {"message": "No changes"}
+    res = await db["users"].update_one(
+        {"_id": _oid(user_id), "role": "photographer", "is_deleted": {"$ne": True}},
+        {"$set": {"pricing": updates, "updated_at": datetime.utcnow()}},
+    )
+    if res.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Photographer not found")
+    return {"message": "Photographer pricing updated"}
+
+
+@router.post("/past-shoots")
+async def create_past_shoot(
+    payload: PastShootCreate,
+    _: UserInDB = Depends(get_current_admin_user),
+    db: Database = Depends(get_database),
+):
+    photographer = await db["users"].find_one({"_id": _oid(payload.photographer_id), "role": "photographer"})
+    if not photographer:
+        raise HTTPException(status_code=404, detail="Photographer not found")
+    doc = payload.dict()
+    doc["event_type"] = doc["event_type"].strip().lower()
+    doc["features"] = [f.strip().lower() for f in (doc.get("features") or [])]
+    res = await db["past_shoots"].insert_one(doc)
+    return {"id": str(res.inserted_id), "message": "Past shoot added"}
+
+
+@router.get("/past-shoots")
+async def list_past_shoots(
+    page: int = Query(1, ge=1),
+    limit: int = Query(20, ge=1, le=200),
+    _: UserInDB = Depends(get_current_admin_user),
+    db: Database = Depends(get_database),
+):
+    skip = (page - 1) * limit
+    col = db["past_shoots"]
+    total = await col.count_documents({})
+    rows = await col.find().sort("date", -1).skip(skip).limit(limit).to_list(length=limit)
+    for r in rows:
+        r["id"] = str(r.pop("_id"))
+    return {"total": total, "page": page, "limit": limit, "items": rows}
+
+
+@router.get("/pricing/stats")
+async def pricing_stats(
+    _: UserInDB = Depends(get_current_admin_user),
+    db: Database = Depends(get_database),
+):
+    rows = await db["past_shoots"].aggregate(
+        [
+            {"$group": {"_id": "$event_type", "avg_price": {"$avg": "$final_price"}, "count": {"$sum": 1}}},
+            {"$sort": {"count": -1}},
+        ]
+    ).to_list(length=200)
+    demand = [{"event_type": str(r.get("_id") or "unknown"), "avg_price": float(r.get("avg_price") or 0), "count": int(r.get("count") or 0)} for r in rows]
+    return {"event_pricing": demand}
