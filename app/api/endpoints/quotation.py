@@ -215,8 +215,9 @@ class QuoteRequestBody(BaseModel):
     event_title: str
     event_type: str
     location: str
-    event_date: datetime
-    duration_hours: float = Field(..., gt=0)
+    event_start_date: datetime
+    event_end_date: datetime
+    duration_hours: Optional[float] = Field(None, gt=0)
     description: Optional[str] = None
     budget: Optional[float] = Field(None, gt=0)
 
@@ -247,6 +248,10 @@ class PaymentInitiateBody(BaseModel):
 
 class TaskCompleteBody(BaseModel):
     task_id: str
+
+
+class BookingCancelBody(BaseModel):
+    booking_id: str
 
 
 def _oid(value: str) -> ObjectId:
@@ -282,6 +287,101 @@ def _send_email(to_email: Optional[str], subject: str, html_body: str) -> None:
         server.sendmail(username, [to_email], msg.as_string())
 
 
+def _format_event_date_time(value: Any) -> Dict[str, str]:
+    if isinstance(value, datetime):
+        dt = value
+    elif value:
+        try:
+            dt = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        except ValueError:
+            return {"date": str(value), "time": "TBD"}
+    else:
+        return {"date": "TBD", "time": "TBD"}
+    return {
+        "date": dt.strftime("%d %B %Y"),
+        "time": dt.strftime("%I:%M %p"),
+    }
+
+
+def _booking_confirmation_email_html(
+    customer_name: str,
+    event_name: str,
+    event_date: Any,
+    location: str,
+    photographer_name: str,
+    booking_id: str,
+) -> str:
+    dt = _format_event_date_time(event_date)
+    app_base_url = (os.getenv("APP_BASE_URL") or "http://localhost:5173").rstrip("/")
+    booking_link = f"{app_base_url}/my-bookings"
+    return f"""
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Booking Confirmation</title>
+</head>
+<body style="margin:0; padding:0; background-color:#f4f4f7; font-family:Arial, sans-serif;">
+  <table width="100%" cellpadding="0" cellspacing="0" style="background-color:#f4f4f7; padding:20px;">
+    <tr>
+      <td align="center">
+        <table width="600" cellpadding="0" cellspacing="0" style="max-width:600px; width:100%; background:#ffffff; border-radius:12px; overflow:hidden; box-shadow:0 4px 10px rgba(0,0,0,0.05);">
+          <tr>
+            <td align="center" style="background:linear-gradient(90deg, #6C63FF, #8E85FF); padding:24px;">
+              <h1 style="color:#ffffff; margin:0; font-size:26px;">BookMyPhotoshoot</h1>
+              <p style="color:#e0e0ff; margin:8px 0 0;">Capture Your Moments, Forever 📸</p>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:22px 22px 10px;">
+              <p style="font-size:16px; margin:0;">Hello <strong>{customer_name}</strong>,</p>
+              <p style="font-size:16px; margin:12px 0 0;">Your booking has been successfully confirmed! 🎉</p>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:0 22px 20px;">
+              <table width="100%" cellpadding="10" cellspacing="0" style="border:1px solid #ececf2; border-radius:10px;">
+                <tr><td><strong>📌 Event Name:</strong></td><td>{event_name}</td></tr>
+                <tr><td><strong>📅 Date:</strong></td><td><strong>{dt["date"]}</strong></td></tr>
+                <tr><td><strong>⏰ Time:</strong></td><td><strong>{dt["time"]}</strong></td></tr>
+                <tr><td><strong>📍 Location:</strong></td><td>{location}</td></tr>
+                <tr><td><strong>👤 Booked By:</strong></td><td>{customer_name}</td></tr>
+                <tr><td><strong>📷 Photographer:</strong></td><td>{photographer_name}</td></tr>
+                <tr><td><strong>🧾 Booking ID:</strong></td><td>{booking_id}</td></tr>
+              </table>
+            </td>
+          </tr>
+          <tr>
+            <td align="center" style="padding:4px 22px 20px;">
+              <a href="{booking_link}" style="background:#6C63FF; color:#ffffff; text-decoration:none; padding:12px 24px; border-radius:8px; display:inline-block; font-weight:bold;">
+                View Booking Details
+              </a>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:0 22px 20px;">
+              <p style="font-size:14px; color:#555; margin:0;">
+                Please arrive 10 minutes before your scheduled time.<br>
+                For any changes, contact your photographer.
+              </p>
+            </td>
+          </tr>
+          <tr>
+            <td align="center" style="background:#f9f9fb; padding:15px; border-top:1px solid #ececf2;">
+              <p style="margin:0; font-size:14px; color:#777;">Thank you for choosing <strong>BookMyPhotoshoot 💜</strong></p>
+              <p style="margin:8px 0 0; font-size:12px; color:#999;">Need help? contact@bookmyphotoshoot.demo</p>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>
+"""
+
+
 @router.post("/quotation/request")
 async def quotation_request(
     body: QuoteRequestBody,
@@ -294,6 +394,17 @@ async def quotation_request(
     if not photographer:
         raise HTTPException(status_code=404, detail="Photographer not found")
     now = datetime.utcnow()
+    start_dt = body.event_start_date
+    end_dt = body.event_end_date
+    if end_dt <= start_dt:
+        raise HTTPException(status_code=400, detail="Event end date must be after start date")
+    diff_hours = (end_dt - start_dt).total_seconds() / 3600
+    computed_duration_hours = round(diff_hours, 2)
+    if computed_duration_hours <= 0:
+        raise HTTPException(status_code=400, detail="Event duration must be greater than 0")
+    duration_hours = float(body.duration_hours or computed_duration_hours)
+    if start_dt.date() == end_dt.date():
+        duration_hours = computed_duration_hours
     quotation_doc = {
         "user_id": _oid(current_user.id),
         "photographer_id": _oid(body.photographer_id),
@@ -301,8 +412,10 @@ async def quotation_request(
             "title": body.event_title.strip(),
             "event_type": body.event_type.strip().lower(),
             "location": body.location.strip(),
-            "event_date": body.event_date,
-            "duration_hours": body.duration_hours,
+            "event_start_date": start_dt,
+            "event_end_date": end_dt,
+            "event_date": start_dt,
+            "duration_hours": duration_hours,
             "description": body.description,
             "budget": body.budget,
         },
@@ -425,8 +538,14 @@ async def booking_confirm(
         raise HTTPException(status_code=400, detail="Quotation is not in confirmable state")
 
     event = quotation.get("event_details") or {}
-    event_date = event.get("event_date")
+    event_start_date = event.get("event_start_date") or event.get("event_date")
+    event_end_date = event.get("event_end_date")
     duration_hours = float(event.get("duration_hours") or 1)
+    if event_start_date and event_end_date:
+        computed_hours = (event_end_date - event_start_date).total_seconds() / 3600
+        if computed_hours > 0:
+            duration_hours = float(round(computed_hours, 2))
+    event_date = event_start_date
     if not event_date:
         raise HTTPException(status_code=400, detail="Missing event date")
 
@@ -468,6 +587,7 @@ async def booking_confirm(
         "event_type": event.get("event_type"),
         "location": event.get("location"),
         "event_date": event_date,
+        "event_end_date": event_end_date,
         "duration": duration_hours,
         "description": event.get("description"),
         "budget": event.get("budget"),
@@ -509,7 +629,14 @@ async def booking_confirm(
     _send_email(
         (customer or {}).get("email"),
         "Your Booking is Confirmed",
-        f"<p>Booking confirmed. Invoice: <b>{invoice_number}</b>. Final amount: ₹{final_price}</p>",
+        _booking_confirmation_email_html(
+            customer_name=(customer or {}).get("full_name") or (customer or {}).get("name") or "Customer",
+            event_name=event.get("title") or "Your Event",
+            event_date=event_date,
+            location=event.get("location") or "Location not specified",
+            photographer_name=(photographer or {}).get("full_name") or (photographer or {}).get("name") or "Photographer",
+            booking_id=str(booking_res.inserted_id),
+        ),
     )
 
     return {
@@ -621,6 +748,46 @@ async def task_complete(
     return {"message": "Task marked as completed"}
 
 
+@router.post("/booking/cancel")
+async def cancel_booking(
+    body: BookingCancelBody,
+    current_user: UserInDB = Depends(get_current_active_user),
+    db: Database = Depends(get_database),
+):
+    booking = await db["bookings"].find_one({"_id": _oid(body.booking_id)})
+    if not booking:
+        raise HTTPException(status_code=404, detail="Booking not found")
+    if booking.get("status") == "cancelled":
+        return {"message": "Booking already cancelled"}
+
+    role = (current_user.role or "").lower()
+    is_admin = role in {"admin", "staff", "super_admin"}
+    owns_as_customer = str(booking.get("user_id") or booking.get("customer_id")) == current_user.id
+    owns_as_photographer = str(booking.get("photographer_id")) == current_user.id
+    if not (is_admin or owns_as_customer or owns_as_photographer):
+        raise HTTPException(status_code=403, detail="Not allowed to cancel this booking")
+
+    event_date = booking.get("event_date")
+    if owns_as_photographer and event_date:
+        days_diff = (event_date - datetime.utcnow()).total_seconds() / 86400
+        if days_diff < 7:
+            raise HTTPException(status_code=400, detail="Photographer cannot cancel booking within 7 days")
+
+    cancelled_by = "admin" if is_admin else ("photographer" if owns_as_photographer else "user")
+    now = datetime.utcnow()
+    await db["bookings"].update_one(
+        {"_id": booking["_id"]},
+        {"$set": {"status": "cancelled", "cancelled_by": cancelled_by, "updated_at": now}},
+    )
+    event_id = booking.get("event_id")
+    if event_id:
+        await db["auctions"].update_one(
+            {"_id": event_id},
+            {"$set": {"status": "cancelled", "updated_at": now}},
+        )
+    return {"message": "Booking cancelled", "cancelled_by": cancelled_by}
+
+
 @router.get("/quotation/mine")
 async def my_quotations(
     current_user: UserInDB = Depends(get_current_active_user),
@@ -628,10 +795,22 @@ async def my_quotations(
 ):
     query = {"user_id": _oid(current_user.id)} if current_user.role == "customer" else {"photographer_id": _oid(current_user.id)}
     rows = await db["quotations"].find(query).sort("created_at", -1).to_list(length=500)
+    user_ids = {row.get("user_id") for row in rows if row.get("user_id")} | {
+        row.get("photographer_id") for row in rows if row.get("photographer_id")
+    }
+    users_by_id: Dict[str, Dict[str, Any]] = {}
+    if user_ids:
+        user_rows = await db["users"].find({"_id": {"$in": list(user_ids)}}).to_list(length=1000)
+        users_by_id = {str(u.get("_id")): u for u in user_rows if u.get("_id")}
     for row in rows:
         row["id"] = str(row.pop("_id"))
         row["user_id"] = str(row.get("user_id")) if row.get("user_id") else None
         row["photographer_id"] = str(row.get("photographer_id")) if row.get("photographer_id") else None
+        row["booking_id"] = str(row.get("booking_id")) if row.get("booking_id") else None
+        row["customer_name"] = (users_by_id.get(row["user_id"]) or {}).get("full_name") or (users_by_id.get(row["user_id"]) or {}).get("name")
+        row["photographer_name"] = (users_by_id.get(row["photographer_id"]) or {}).get("full_name") or (
+            users_by_id.get(row["photographer_id"]) or {}
+        ).get("name")
     return {"items": rows}
 
 

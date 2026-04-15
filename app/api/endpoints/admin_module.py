@@ -24,6 +24,16 @@ def _month_start(now: datetime) -> datetime:
     return now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
 
 
+def _json_safe(value: Any) -> Any:
+    if isinstance(value, ObjectId):
+        return str(value)
+    if isinstance(value, list):
+        return [_json_safe(v) for v in value]
+    if isinstance(value, dict):
+        return {k: _json_safe(v) for k, v in value.items()}
+    return value
+
+
 class DashboardSummary(BaseModel):
     new_photographers: int
     new_customers: int
@@ -423,6 +433,190 @@ async def patch_user_role(
     return {"message": "Role updated"}
 
 
+@router.get("/users/{user_id}/details")
+async def user_details_admin(
+    user_id: str,
+    _: UserInDB = Depends(get_current_admin_user),
+    db: Database = Depends(get_database),
+):
+    users_col = db["users"]
+    user_doc = await users_col.find_one({"_id": _oid(user_id), "is_deleted": {"$ne": True}})
+    if not user_doc:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    auctions = await db["auctions"].find({"user_id": user_doc["_id"]}).sort("created_at", -1).to_list(length=500)
+    bookings = await db["bookings"].find(
+        {"$or": [{"user_id": user_doc["_id"]}, {"customer_id": user_doc["_id"]}]}
+    ).sort("event_date", -1).to_list(length=500)
+    quotations = await db["quotations"].find({"user_id": user_doc["_id"]}).sort("created_at", -1).to_list(length=500)
+
+    photographer_ids = {b.get("photographer_id") for b in bookings if b.get("photographer_id")} | {
+        q.get("photographer_id") for q in quotations if q.get("photographer_id")
+    }
+    photographer_rows = []
+    if photographer_ids:
+        photographer_rows = await users_col.find({"_id": {"$in": list(photographer_ids)}}).to_list(length=1000)
+    photographer_map = {str(p["_id"]): p for p in photographer_rows if p.get("_id")}
+
+    auction_ids = [a["_id"] for a in auctions if a.get("_id")]
+    auction_bids: List[Dict[str, Any]] = []
+    if auction_ids:
+        auction_bids = await db["auction_bids"].find({"event_id": {"$in": auction_ids}}).sort("created_at", 1).to_list(length=5000)
+    bids_by_auction: Dict[str, List[Dict[str, Any]]] = {}
+    for bid in auction_bids:
+        key = str(bid.get("event_id"))
+        bids_by_auction.setdefault(key, []).append(bid)
+
+    booking_rows = await db["bookings"].find({"event_id": {"$in": auction_ids}}).to_list(length=1000) if auction_ids else []
+    booking_by_auction = {str(b.get("event_id")): b for b in booking_rows if b.get("event_id")}
+
+    bidder_ids = {b.get("photographer_id") for b in auction_bids if b.get("photographer_id")}
+    bidder_rows: List[Dict[str, Any]] = []
+    if bidder_ids:
+        bidder_rows = await users_col.find({"_id": {"$in": list(bidder_ids)}}).to_list(length=1000)
+    bidder_map = {str(u["_id"]): u for u in bidder_rows if u.get("_id")}
+
+    auctions_out = []
+    for a in auctions:
+        selected_pid = str(a["selected_photographer_id"]) if a.get("selected_photographer_id") else None
+        selected_bid_id = str(a["selected_bid_id"]) if a.get("selected_bid_id") else None
+        bid_rows = bids_by_auction.get(str(a["_id"]), [])
+        bids_out = []
+        selected_price = None
+        for bid in bid_rows:
+            bid_id = str(bid.get("_id"))
+            pid = str(bid.get("photographer_id")) if bid.get("photographer_id") else None
+            bdoc = bidder_map.get(pid or "", {})
+            item = {
+                "id": bid_id,
+                "photographer_id": pid,
+                "photographer_name": bdoc.get("full_name") or bdoc.get("name"),
+                "amount": float(bid.get("bid_amount") or 0),
+                "message": bid.get("message"),
+                "created_at": bid.get("created_at"),
+                "is_selected": bid_id == selected_bid_id,
+            }
+            if item["is_selected"]:
+                selected_price = item["amount"]
+            bids_out.append(item)
+        booking = booking_by_auction.get(str(a["_id"]))
+        auctions_out.append(
+            {
+                "id": str(a["_id"]),
+                "title": a.get("title"),
+                "status": a.get("status"),
+                "event_date": a.get("event_date"),
+                "created_at": a.get("created_at"),
+                "selected_photographer_id": selected_pid,
+                "selected_photographer_name": (bidder_map.get(selected_pid or "") or {}).get("full_name")
+                or (bidder_map.get(selected_pid or "") or {}).get("name"),
+                "selected_bid_id": selected_bid_id,
+                "selected_price": selected_price,
+                "final_price": a.get("final_price") or (booking or {}).get("final_price"),
+                "booking_confirmed": bool(booking and booking.get("status") in {"confirmed", "upcoming", "completed"}),
+                "booking_status": (booking or {}).get("status"),
+                "booking_id": str((booking or {}).get("_id")) if (booking or {}).get("_id") else None,
+                "bids": bids_out,
+            }
+        )
+
+    bookings_out = []
+    for b in bookings:
+        pid = str(b.get("photographer_id")) if b.get("photographer_id") else None
+        pdoc = photographer_map.get(pid or "", {})
+        bookings_out.append(
+            {
+                "id": str(b["_id"]),
+                "event_date": b.get("event_date"),
+                "status": b.get("status"),
+                "photographer_id": pid,
+                "photographer_name": pdoc.get("full_name") or pdoc.get("name"),
+            }
+        )
+
+    quotations_out = []
+    for q in quotations:
+        pid = str(q.get("photographer_id")) if q.get("photographer_id") else None
+        pdoc = photographer_map.get(pid or "", {})
+        quotations_out.append(
+            {
+                "id": str(q["_id"]),
+                "photographer_id": pid,
+                "photographer_name": pdoc.get("full_name") or pdoc.get("name"),
+                "initial_amount": q.get("latest_amount"),
+                "negotiated_amount": q.get("latest_amount"),
+                "status": q.get("status"),
+                "created_at": q.get("created_at"),
+            }
+        )
+
+    return {
+        "user": {
+            "id": str(user_doc["_id"]),
+            "name": user_doc.get("full_name") or user_doc.get("name"),
+            "email": user_doc.get("email"),
+            "role": user_doc.get("role"),
+            "membership_active": bool(user_doc.get("is_member") and user_doc.get("membership_expiry") and user_doc.get("membership_expiry") > datetime.utcnow()),
+        },
+        "auctions": auctions_out,
+        "bookings": bookings_out,
+        "quotations": quotations_out,
+    }
+
+
+@router.get("/photographers/{user_id}/details")
+async def photographer_details_admin(
+    user_id: str,
+    _: UserInDB = Depends(get_current_admin_user),
+    db: Database = Depends(get_database),
+):
+    users_col = db["users"]
+    photographer = await users_col.find_one({"_id": _oid(user_id), "role": UserRole.PHOTOGRAPHER.value, "is_deleted": {"$ne": True}})
+    if not photographer:
+        raise HTTPException(status_code=404, detail="Photographer not found")
+
+    bookings = await db["bookings"].find({"photographer_id": photographer["_id"]}).sort("event_date", -1).to_list(length=1000)
+    customer_ids = {b.get("user_id") for b in bookings if b.get("user_id")} | {b.get("customer_id") for b in bookings if b.get("customer_id")}
+    customer_rows = []
+    if customer_ids:
+        customer_rows = await users_col.find({"_id": {"$in": list(customer_ids)}}).to_list(length=1000)
+    customer_map = {str(c["_id"]): c for c in customer_rows if c.get("_id")}
+
+    now = datetime.utcnow()
+    upcoming: List[Dict[str, Any]] = []
+    past: List[Dict[str, Any]] = []
+    for b in bookings:
+        uid = str(b.get("user_id") or b.get("customer_id")) if (b.get("user_id") or b.get("customer_id")) else None
+        cdoc = customer_map.get(uid or "", {})
+        item = {
+            "id": str(b["_id"]),
+            "event_title": b.get("event_title") or b.get("title"),
+            "event_type": b.get("event_type"),
+            "location": b.get("location"),
+            "event_date": b.get("event_date"),
+            "status": b.get("status"),
+            "payment_status": b.get("payment_status") or "pending",
+            "final_price": b.get("final_price"),
+            "user_id": uid,
+            "user_name": cdoc.get("full_name") or cdoc.get("name"),
+        }
+        if b.get("event_date") and b.get("event_date") >= now:
+            upcoming.append(item)
+        else:
+            past.append(item)
+
+    return {
+        "photographer": {
+            "id": str(photographer["_id"]),
+            "name": photographer.get("full_name") or photographer.get("name"),
+            "email": photographer.get("email"),
+            "role": photographer.get("role"),
+        },
+        "upcoming_bookings": upcoming,
+        "past_bookings": past,
+    }
+
+
 @router.delete("/users/{user_id}")
 async def delete_user_admin(
     user_id: str,
@@ -587,6 +781,55 @@ async def payments_subscriptions(
     return {"total": total, "page": page, "limit": limit, "items": rows}
 
 
+@router.get("/subscriptions/revenue-stats")
+async def subscription_revenue_stats(
+    _: UserInDB = Depends(get_current_admin_user),
+    db: Database = Depends(get_database),
+):
+    col = db["subscriptions"]
+    total_rows = await col.aggregate(
+        [
+            {"$match": {"status": "success"}},
+            {
+                "$group": {
+                    "_id": None,
+                    "total_amount": {"$sum": {"$ifNull": ["$amount", 0]}},
+                    "total_purchases": {"$sum": 1},
+                    "unique_users": {"$addToSet": "$user_id"},
+                }
+            },
+        ]
+    ).to_list(length=1)
+    by_plan_rows = await col.aggregate(
+        [
+            {"$match": {"status": "success"}},
+            {
+                "$group": {
+                    "_id": "$plan",
+                    "amount": {"$sum": {"$ifNull": ["$amount", 0]}},
+                    "count": {"$sum": 1},
+                }
+            },
+        ]
+    ).to_list(length=20)
+    total_amount = float((total_rows[0]["total_amount"] if total_rows else 0) or 0)
+    total_purchases = int((total_rows[0]["total_purchases"] if total_rows else 0) or 0)
+    unique_photographers = len((total_rows[0].get("unique_users") if total_rows else []) or [])
+    by_plan: Dict[str, Dict[str, Any]] = {}
+    for row in by_plan_rows:
+        key = str(row.get("_id") or "unknown").lower()
+        by_plan[key] = {
+            "amount": float(row.get("amount") or 0),
+            "count": int(row.get("count") or 0),
+        }
+    return {
+        "total_amount": total_amount,
+        "total_purchases": total_purchases,
+        "unique_photographers": unique_photographers,
+        "by_plan": by_plan,
+    }
+
+
 @router.get("/payments/photoshoots")
 async def payments_photoshoots(
     page: int = Query(1, ge=1),
@@ -600,6 +843,9 @@ async def payments_photoshoots(
     rows = await col.find().sort("created_at", -1).skip(skip).limit(limit).to_list(length=limit)
     for r in rows:
         r["id"] = str(r.pop("_id"))
+        safe = _json_safe(r)
+        r.clear()
+        r.update(safe)
     return {"total": total, "page": page, "limit": limit, "items": rows}
 
 

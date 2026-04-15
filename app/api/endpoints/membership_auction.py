@@ -1,7 +1,7 @@
 import os
 import smtplib
 import uuid
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from typing import Any, Dict, List, Optional
@@ -37,6 +37,16 @@ def _is_member_active(user_doc: Dict[str, Any]) -> bool:
         return False
     expiry = user_doc.get("membership_expiry")
     return bool(expiry and expiry > datetime.utcnow())
+
+
+def _to_utc_naive(dt: datetime) -> datetime:
+    """
+    Normalize datetime to naive UTC so comparisons stay consistent
+    when request payload includes timezone-aware ISO timestamps.
+    """
+    if dt.tzinfo is None:
+        return dt
+    return dt.astimezone(timezone.utc).replace(tzinfo=None)
 
 
 async def _get_auction_config(db: Database) -> Dict[str, Any]:
@@ -263,9 +273,11 @@ async def create_auction(
     db: Database = Depends(get_database),
 ):
     now = datetime.utcnow()
-    if body.bidding_deadline <= now:
+    bidding_deadline = _to_utc_naive(body.bidding_deadline)
+    event_date = _to_utc_naive(body.event_date)
+    if bidding_deadline <= now:
         raise HTTPException(status_code=400, detail="Bidding deadline must be in the future")
-    if body.event_date < now:
+    if event_date < now:
         raise HTTPException(status_code=400, detail="Event date must be in the future")
 
     doc = {
@@ -273,11 +285,11 @@ async def create_auction(
         "title": body.title.strip(),
         "event_type": body.event_type.strip().lower(),
         "location": body.location.strip(),
-        "event_date": body.event_date,
+        "event_date": event_date,
         "description": body.description,
         "budget": body.budget,
         "required_features": [f.strip().lower() for f in body.required_features if f.strip()],
-        "bidding_deadline": body.bidding_deadline,
+        "bidding_deadline": bidding_deadline,
         "status": "open",
         "selected_photographer_id": None,
         "selected_bid_id": None,
@@ -459,6 +471,9 @@ async def select_bidder(
         raise HTTPException(status_code=403, detail="Only auction owner can select bidder")
     if auction.get("status") != "open":
         raise HTTPException(status_code=400, detail="Auction already finalized/cancelled")
+    existing_booking = await db["bookings"].find_one({"event_id": event_oid, "status": {"$in": ["confirmed", "upcoming"]}})
+    if existing_booking:
+        raise HTTPException(status_code=400, detail="Booking already exists for this auction")
 
     bid = await db["auction_bids"].find_one({"_id": bid_oid, "event_id": event_oid})
     if not bid:
@@ -484,6 +499,12 @@ async def cancel_auction(
         raise HTTPException(status_code=400, detail="Auction cannot be cancelled")
     if auction.get("selected_photographer_id"):
         raise HTTPException(status_code=400, detail="Auction already has selected photographer")
+    created_at = auction.get("created_at")
+    if not created_at:
+        raise HTTPException(status_code=400, detail="Auction cancellation unavailable for this record")
+    days_since_created = (datetime.utcnow() - created_at).total_seconds() / 86400
+    if days_since_created > 7:
+        raise HTTPException(status_code=400, detail="Cancellation window expired (7 days)")
 
     await db["auctions"].update_one(
         {"_id": event_oid},
