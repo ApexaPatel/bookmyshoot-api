@@ -29,6 +29,10 @@ class ReviewCreateBody(BaseModel):
     comment: Optional[str] = None
 
 
+class VisibilityUpdateBody(BaseModel):
+    visibility: str = Field(..., regex="^(private|public)$")
+
+
 async def _get_optional_user(token: Optional[str], db: Database) -> Optional[UserInDB]:
     if not token:
         return None
@@ -96,7 +100,7 @@ async def list_photographers(db: Database = Depends(get_database)):
     """
     users = db["users"]
     pipeline = [
-        {"$match": {"role": "photographer", "is_active": True}},
+        {"$match": {"role": "photographer", "is_active": True, "visibility": "public"}},
         {"$sort": {"created_at": -1}},
         {
             "$lookup": {
@@ -166,6 +170,7 @@ async def list_photographers(db: Database = Depends(get_database)):
                 "total_reviews": 1,
                 "is_part_of_organization": 1,
                 "organization_id": 1,
+                "visibility": 1,
                 "portfolio_events": 1,
                 "portfolio_cities": 1,
                 "organizationId": {
@@ -200,6 +205,7 @@ async def list_photographers(db: Database = Depends(get_database)):
             "total_reviews": int(doc.get("total_reviews") or 0),
             "is_part_of_organization": doc.get("is_part_of_organization", False),
             "organization_id": str(doc["organization_id"]) if doc.get("organization_id") else None,
+            "visibility": doc.get("visibility") or "private",
             "organizationId": doc.get("organizationId"),
             "portfolio_events": portfolio_events,
             "portfolio_cities": portfolio_cities,
@@ -416,3 +422,23 @@ async def upsert_review(
 
     await _refresh_photographer_rating(db, photographer_oid)
     return {"message": "Review submitted", "review_id": review_id}
+
+
+@router.patch("/me/visibility", response_model=dict)
+async def update_my_visibility(
+    body: VisibilityUpdateBody,
+    current_user: UserInDB = Depends(get_current_active_user),
+    db: Database = Depends(get_database),
+):
+    if current_user.role != "photographer":
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only photographers can update visibility")
+
+    visibility_value = body.visibility.strip().lower()
+    if visibility_value not in {"private", "public"}:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid visibility value")
+
+    await db["users"].update_one(
+        {"_id": ObjectId(current_user.id), "role": "photographer"},
+        {"$set": {"visibility": visibility_value, "updated_at": datetime.utcnow()}},
+    )
+    return {"message": "Visibility updated", "visibility": visibility_value}

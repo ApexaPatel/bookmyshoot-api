@@ -254,6 +254,10 @@ class BookingCancelBody(BaseModel):
     booking_id: str
 
 
+class BookingCompleteBody(BaseModel):
+    booking_id: str
+
+
 def _oid(value: str) -> ObjectId:
     if not ObjectId.is_valid(value):
         raise HTTPException(status_code=400, detail="Invalid id")
@@ -786,6 +790,51 @@ async def cancel_booking(
             {"$set": {"status": "cancelled", "updated_at": now}},
         )
     return {"message": "Booking cancelled", "cancelled_by": cancelled_by}
+
+
+@router.post("/booking/complete")
+async def complete_booking(
+    body: BookingCompleteBody,
+    current_user: UserInDB = Depends(get_current_active_user),
+    db: Database = Depends(get_database),
+):
+    booking = await db["bookings"].find_one({"_id": _oid(body.booking_id)})
+    if not booking:
+        raise HTTPException(status_code=404, detail="Booking not found")
+    if str(booking.get("photographer_id")) != current_user.id:
+        raise HTTPException(status_code=403, detail="Only assigned photographer can complete booking")
+
+    status = str(booking.get("status") or "").lower()
+    if status in {"completed", "cancelled"}:
+        raise HTTPException(status_code=400, detail="Booking cannot be marked completed")
+
+    start_dt = booking.get("event_date")
+    if not isinstance(start_dt, datetime):
+        raise HTTPException(status_code=400, detail="Booking start date is missing")
+
+    today = datetime.utcnow().date()
+    if today < start_dt.date():
+        raise HTTPException(status_code=400, detail="Booking can only be completed on or after the event start date")
+
+    now = datetime.utcnow()
+    await db["bookings"].update_one(
+        {"_id": booking["_id"]},
+        {"$set": {"status": "completed", "updated_at": now}},
+    )
+    await db["tasks"].update_many(
+        {"booking_id": booking["_id"], "photographer_id": booking.get("photographer_id")},
+        {"$set": {"status": "completed", "updated_at": now}},
+    )
+
+    customer = await db["users"].find_one({"_id": booking.get("user_id")})
+    if booking.get("payment_status") != "success":
+        _send_email(
+            (customer or {}).get("email"),
+            "Payment Reminder",
+            "<p>Your shoot is marked completed. Please complete payment to close the booking.</p>",
+        )
+
+    return {"message": "Booking marked as completed"}
 
 
 @router.get("/quotation/mine")

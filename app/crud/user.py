@@ -12,6 +12,10 @@ class CRUDUser:
     def __init__(self, db: Database):
         self.db = db
         self.collection = db["users"]
+
+    @staticmethod
+    def _default_visibility_for_role(role: str) -> str:
+        return "private" if role == UserRole.PHOTOGRAPHER.value else "public"
     
     async def get_by_email(self, email: str) -> Optional[UserInDB]:
         """Get a user by email."""
@@ -24,6 +28,7 @@ class CRUDUser:
             user_dict.setdefault("is_active", True)
             user_dict.setdefault("is_verified", False)
             user_dict.setdefault("role", "customer")
+            user_dict.setdefault("visibility", self._default_visibility_for_role(user_dict.get("role", "customer")))
             user_dict.setdefault("photographer_plan", "free")
             user_dict.setdefault("plan_started_at", None)
             user_dict.setdefault("plan_expires_at", None)
@@ -53,6 +58,7 @@ class CRUDUser:
                 user_dict.setdefault("is_active", True)
                 user_dict.setdefault("is_verified", False)
                 user_dict.setdefault("role", "customer")
+                user_dict.setdefault("visibility", self._default_visibility_for_role(user_dict.get("role", "customer")))
                 user_dict.setdefault("photographer_plan", "free")
                 user_dict.setdefault("plan_started_at", None)
                 user_dict.setdefault("plan_expires_at", None)
@@ -98,6 +104,7 @@ class CRUDUser:
             user_data.setdefault("membership_expiry", None)
             user_data.setdefault("is_part_of_organization", False)
             user_data.setdefault("organization_id", None)
+            user_data.setdefault("visibility", self._default_visibility_for_role(user_data.get("role", "customer")))
 
             # Convert organization_id string to ObjectId for MongoDB
             oid = user_data.get("organization_id")
@@ -119,6 +126,7 @@ class CRUDUser:
             created_user.setdefault("is_active", True)
             created_user.setdefault("is_verified", False)
             created_user.setdefault("role", "customer")
+            created_user.setdefault("visibility", self._default_visibility_for_role(created_user.get("role", "customer")))
             created_user.setdefault("photographer_plan", "free")
             created_user.setdefault("plan_started_at", None)
             created_user.setdefault("plan_expires_at", None)
@@ -212,6 +220,7 @@ class CRUDUser:
             if updated_user:
                 updated_user["id"] = str(updated_user.pop("_id"))
                 updated_user.setdefault("is_part_of_organization", False)
+                updated_user.setdefault("visibility", self._default_visibility_for_role(updated_user.get("role", "customer")))
                 updated_user.setdefault("photographer_plan", "free")
                 updated_user.setdefault("plan_started_at", None)
                 updated_user.setdefault("plan_expires_at", None)

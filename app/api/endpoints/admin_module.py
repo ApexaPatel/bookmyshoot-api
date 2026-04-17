@@ -82,6 +82,10 @@ class RoleUpdateBody(BaseModel):
     role: UserRole
 
 
+class PhotographerVisibilityUpdateBody(BaseModel):
+    visibility: Literal["private", "public"]
+
+
 class ExpenseCreate(BaseModel):
     title: str = Field(..., min_length=2)
     amount: float = Field(..., gt=0)
@@ -385,6 +389,7 @@ async def create_user_admin(
         "is_active": True,
         "is_verified": False,
         "role": payload.role.value,
+        "visibility": "private" if payload.role.value == UserRole.PHOTOGRAPHER.value else "public",
         "hashed_password": get_password_hash(payload.password),
         "photographer_plan": "free",
         "plan_started_at": None,
@@ -449,6 +454,7 @@ async def user_details_admin(
         {"$or": [{"user_id": user_doc["_id"]}, {"customer_id": user_doc["_id"]}]}
     ).sort("event_date", -1).to_list(length=500)
     quotations = await db["quotations"].find({"user_id": user_doc["_id"]}).sort("created_at", -1).to_list(length=500)
+    quotation_ids = [q["_id"] for q in quotations if q.get("_id")]
 
     photographer_ids = {b.get("photographer_id") for b in bookings if b.get("photographer_id")} | {
         q.get("photographer_id") for q in quotations if q.get("photographer_id")
@@ -469,6 +475,25 @@ async def user_details_admin(
 
     booking_rows = await db["bookings"].find({"event_id": {"$in": auction_ids}}).to_list(length=1000) if auction_ids else []
     booking_by_auction = {str(b.get("event_id")): b for b in booking_rows if b.get("event_id")}
+
+    quote_messages: List[Dict[str, Any]] = []
+    if quotation_ids:
+        quote_messages = await db["quotation_messages"].find({"quotation_id": {"$in": quotation_ids}}).sort("created_at", 1).to_list(length=5000)
+    first_photographer_amount_by_quote: Dict[str, float] = {}
+    for msg in quote_messages:
+        if msg.get("sender") != "photographer":
+            continue
+        qid = str(msg.get("quotation_id")) if msg.get("quotation_id") else None
+        if not qid or qid in first_photographer_amount_by_quote:
+            continue
+        amount = msg.get("amount")
+        if amount is not None:
+            first_photographer_amount_by_quote[qid] = float(amount)
+
+    quote_bookings: List[Dict[str, Any]] = []
+    if quotation_ids:
+        quote_bookings = await db["bookings"].find({"quotation_id": {"$in": quotation_ids}}).to_list(length=1000)
+    booking_by_quote = {str(b.get("quotation_id")): b for b in quote_bookings if b.get("quotation_id")}
 
     bidder_ids = {b.get("photographer_id") for b in auction_bids if b.get("photographer_id")}
     bidder_rows: List[Dict[str, Any]] = []
@@ -538,13 +563,26 @@ async def user_details_admin(
     for q in quotations:
         pid = str(q.get("photographer_id")) if q.get("photographer_id") else None
         pdoc = photographer_map.get(pid or "", {})
+        qid = str(q["_id"])
+        linked_booking = booking_by_quote.get(qid)
+        initial_amount = first_photographer_amount_by_quote.get(qid)
+        if initial_amount is None and q.get("latest_amount") is not None:
+            initial_amount = float(q.get("latest_amount") or 0)
+        negotiated_amount = None
+        if linked_booking:
+            if linked_booking.get("final_price") is not None:
+                negotiated_amount = float(linked_booking.get("final_price") or 0)
+            elif linked_booking.get("quoted_price") is not None:
+                negotiated_amount = float(linked_booking.get("quoted_price") or 0)
+        if negotiated_amount is None and q.get("latest_amount") is not None:
+            negotiated_amount = float(q.get("latest_amount") or 0)
         quotations_out.append(
             {
-                "id": str(q["_id"]),
+                "id": qid,
                 "photographer_id": pid,
                 "photographer_name": pdoc.get("full_name") or pdoc.get("name"),
-                "initial_amount": q.get("latest_amount"),
-                "negotiated_amount": q.get("latest_amount"),
+                "initial_amount": initial_amount,
+                "negotiated_amount": negotiated_amount,
                 "status": q.get("status"),
                 "created_at": q.get("created_at"),
             }
@@ -701,6 +739,22 @@ async def update_photographer_admin(
     db: Database = Depends(get_database),
 ):
     return await update_user_admin(user_id, payload, _, db)
+
+
+@router.patch("/photographers/{user_id}/visibility")
+async def update_photographer_visibility_admin(
+    user_id: str,
+    payload: PhotographerVisibilityUpdateBody,
+    _: UserInDB = Depends(get_current_admin_user),
+    db: Database = Depends(get_database),
+):
+    res = await db["users"].update_one(
+        {"_id": _oid(user_id), "role": UserRole.PHOTOGRAPHER.value, "is_deleted": {"$ne": True}},
+        {"$set": {"visibility": payload.visibility, "updated_at": datetime.utcnow()}},
+    )
+    if res.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Photographer not found")
+    return {"message": "Photographer visibility updated", "visibility": payload.visibility}
 
 
 @router.delete("/photographers/{user_id}")

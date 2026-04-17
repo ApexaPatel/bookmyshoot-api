@@ -20,6 +20,12 @@ class PhotographerPlan(str, Enum):
     PRO = "pro"
     PREMIUM = "premium"
 
+
+class PhotographerVisibility(str, Enum):
+    PRIVATE = "private"
+    PUBLIC = "public"
+
+
 class OrganizationInline(BaseModel):
     """Inline organization for signup when is_part_of_organization is True."""
     name: str = Field(..., min_length=1, max_length=200)
@@ -39,6 +45,10 @@ class UserBase(BaseModel):
     is_active: bool = Field(True, description="Whether the user account is active")
     is_verified: bool = Field(False, description="Whether the user's email is verified")
     role: UserRole = Field(UserRole.CUSTOMER, description="User's role in the system")
+    visibility: PhotographerVisibility = Field(
+        PhotographerVisibility.PRIVATE,
+        description="Photographer listing visibility in marketplace",
+    )
     photographer_plan: PhotographerPlan = Field(PhotographerPlan.FREE, description="Photographer subscription plan")
     plan_started_at: Optional[datetime] = Field(None, description="Start date for paid photographer plans")
     plan_expires_at: Optional[datetime] = Field(None, description="Expiry date for paid photographer plans")
