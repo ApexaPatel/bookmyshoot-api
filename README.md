@@ -9,7 +9,7 @@ FastAPI backend for BookMyShoot. It handles authentication, photographer discove
 - Cloudinary
 - Pydantic
 
-## Implemented Requirements
+## Implemented Requirements (Current)
 ### Authentication and user profile
 - Email/password signup and login
 - JWT session restore via `GET /api/auth/me`
@@ -18,12 +18,21 @@ FastAPI backend for BookMyShoot. It handles authentication, photographer discove
 - Profile image update
 - Cover image update
 - Photographer bio update
+- Photographer visibility defaults:
+  - new photographers => `private`
+  - other users => `public`
 
 ### Photographer discovery
 - Public photographer listing
 - Organization badges and organization lookup in photographer results
 - Public photographer details endpoint
 - Public photographer event and gallery exploration
+- Visibility-aware marketplace listing:
+  - only `visibility=public` photographers appear in explore
+- Photographer self-visibility control:
+  - photographers can switch `private/public`
+- Admin visibility override:
+  - admins can force `private/public` for any photographer
 
 ### Portfolio management
 - Photographer-only portfolio CRUD
@@ -32,6 +41,8 @@ FastAPI backend for BookMyShoot. It handles authentication, photographer discove
   - minimum 3 images
   - maximum 10 images
   - thumbnail fallback to first image
+- Plan-aware limits:
+  - per-plan photoshoot and gallery limits enforced in app flow
 
 ### Organizations explorer
 - List organizations
@@ -79,6 +90,14 @@ FastAPI backend for BookMyShoot. It handles authentication, photographer discove
 | `POST` | `/api/auction/select` | Auction owner finalizes winner |
 | `POST` | `/api/auction/cancel` | Auction owner cancels open auction |
 
+### Booking lifecycle
+| Method | Endpoint | Purpose |
+|---|---|---|
+| `GET` | `/api/bookings/user` | Customer bookings (upcoming/past) |
+| `GET` | `/api/bookings/photographer` | Photographer bookings list |
+| `POST` | `/api/booking/cancel` | Cancel booking with role/date-based rules |
+| `POST` | `/api/booking/complete` | Photographer marks booking complete on/after start date |
+
 ### Admin (requires `role: super_admin` / `admin` / `staff`)
 | Method | Endpoint | Purpose |
 |---|---|---|
@@ -88,6 +107,7 @@ FastAPI backend for BookMyShoot. It handles authentication, photographer discove
 | `GET` | `/api/admin/dashboard/graph` | 30-day trend graph data |
 | `GET` | `/api/admin/users` | User management list |
 | `GET` | `/api/admin/photographers` | Photographer management list |
+| `PATCH` | `/api/admin/photographers/{user_id}/visibility` | Admin override photographer visibility |
 | `GET` | `/api/admin/payments/subscriptions` | Subscription payments list |
 | `GET` | `/api/admin/payments/memberships` | Membership payments list with status/filter support |
 | `GET` | `/api/admin/payments/photoshoots` | Photoshoot payments list |
@@ -122,6 +142,7 @@ To grant admin access, set a user’s `role` to `super_admin`, `admin`, or `staf
 | `GET` | `/api/photographers/{id}/portfolios` | Public photographer portfolios |
 | `GET` | `/api/photographers/{id}/events` | Distinct photographer events |
 | `GET` | `/api/photographers/{id}/gallery?event=...&location=...` | Event/location filtered gallery |
+| `PATCH` | `/api/photographers/me/visibility` | Photographer updates own visibility (`private/public`) |
 
 ## Setup
 ### 1. Install
@@ -175,6 +196,7 @@ Backend runs on:
   - `cover_image`
   - `bio`
   - `organization_id`
+  - `visibility` (`private` / `public`)
 - Portfolios store:
   - `event_name`
   - `shoot_date`
@@ -196,6 +218,18 @@ Backend runs on:
 2. Load distinct events
 3. Filter gallery by event
 4. Optionally filter by one or more locations
+
+### Visibility flow
+1. Photographer signs up with default `visibility=private`
+2. Photographer updates visibility from profile/portfolio controls
+3. Admin can override visibility from admin panel
+4. Explore endpoint returns only `public` photographers
+
+### Booking completion flow
+1. Booking exists with assigned photographer
+2. Photographer can complete booking on/after event start date
+3. Booking status and linked tasks are marked `completed`
+4. If payment is pending, customer receives payment reminder email
 
 ## Project Structure
 ```text

@@ -52,15 +52,24 @@ async def _get_review_eligibility(db: Database, user: Optional[UserInDB], photog
         return ReviewEligibilityResponse(can_review=False, reason="NOT_LOGGED_IN")
 
     bookings_col = db["bookings"]
+    customer_filter = {
+        "$or": [
+            {"customer_id": ObjectId(user.id)},
+            {"user_id": ObjectId(user.id)},
+        ]
+    }
     any_booking = await bookings_col.find_one(
-        {"customer_id": ObjectId(user.id), "photographer_id": photographer_oid}
+        {
+            **customer_filter,
+            "photographer_id": photographer_oid,
+        }
     )
     if not any_booking:
         return ReviewEligibilityResponse(can_review=False, reason="NO_BOOKING")
 
     completed_booking = await bookings_col.find_one(
         {
-            "customer_id": ObjectId(user.id),
+            **customer_filter,
             "photographer_id": photographer_oid,
             "status": "completed",
         },
